@@ -3,7 +3,7 @@
 > [Dreamer](https://github.com/EESIZ/clawdreamer)를 openclaw용으로 만들어 놨는데, 같은 걸 [Hermes Agent](https://github.com/NousResearch/hermes-agent)에도 붙여보자는 프로젝트
   이름은 Hermes + Yume(夢, 꿈)의 합성어
 
-> AI 에이전트는 잠을 자지 않는다. 꿈도 꾸지 않는다. → 이게 사실 AI 에이전트의 가장 큰 문제
+> AI 에이전트는 잠을 자지 않잠. 꿈도 꾸지 않음. → 이게 사실 AI 에이전트의 가장 큰 문제
 
 > 꿈을 꾼다는건, 자면서 기억들을 압축하고 정리하는 과정을 우연히 의식이 깨어나는 바람에 보게 되는 과정이라고 함
   Dreamer에서 했던 그 가설 그대로, Hermes 에이전트에게도 매일 밤 잠을 재워보자는 것
@@ -12,7 +12,7 @@
 
 **HermesYume은 Hermes 에이전트에게 '꿈'을 선물한다.**
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent)용으로 만들었다. openclaw를 쓴다면 [Dreamer](https://github.com/EESIZ/clawdreamer) 쪽을 쓰면 된다.
+openclaw를 쓴다면 [Dreamer](https://github.com/EESIZ/clawdreamer) 쪽을 쓰면 된다.
 
 [English](README.md)
 
@@ -30,7 +30,7 @@ Hermes는 기억하는 방식 자체가 openclaw랑 다르다. 기본 메모리�
 뇌로 치면 해마(`state.db`, 날것의 에피소드)도 있고 작은 신피질(`MEMORY.md`/`USER.md`, 항상 켜져 있는 지식)도 이미 있다. 근데 **잠**이 없다.
 하루치 대화에서 중요한 걸 골라 옮기고, 바뀐 사실을 합치고, 파일이 꽉 찼을 때 뭘 잊을지 정하는 과정이 따로 없다. 지금은 에이전트가 대화 도중에, 다른 일 하면서 알아서 적어야 한다.
 
-HermesYume이 그 잠을 맡는다.
+HermesYume이 그 꿈을 맡는다.
 
 ## 작동 원리
 
