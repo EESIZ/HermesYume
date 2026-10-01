@@ -31,7 +31,7 @@ from hermes_memory import apply_ops, char_count, clean_entry, threat_findings
 from llm import classify_relationship, consolidate_aspects, merge_state_change, shorten_entry
 from nrem import best_match, entry_vectors
 
-log = logging.getLogger("hermesume.rem")
+log = logging.getLogger("hermesyume.rem")
 
 MAX_SHORTEN_PER_RUN = 5
 # A merged state change may exceed ENTRY_MAX_CHARS by its "(prev: ...)" trace.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Hermesume doctor: check that Hermes is where we think it is.
+"""HermesYume doctor: check that Hermes is where we think it is.
 
-Creates $HERMESUME_HOME and verifies, read-only:
+Creates $HERMESYUME_HOME and verifies, read-only:
   - $HERMES_HOME/state.db exists and has the sessions/messages tables
   - MEMORY.md / USER.md parse and round-trip in Hermes' §-delimited format
   - char limits / enabled flags from $HERMES_HOME/config.yaml
@@ -22,7 +22,7 @@ from config import (
     HERMES_CONFIG_PATH,
     HERMES_HOME,
     HERMES_STATE_DB,
-    HERMESUME_HOME,
+    HERMESYUME_HOME,
     LLM_PROVIDER,
     MEMORY_ARCHIVE_DIR,
     OPENAI_API_KEY,
@@ -33,7 +33,7 @@ from hermes_memory import TARGETS, char_count, load_limits, parse_entries, path_
 def main() -> int:
     problems = 0
     print(f"HERMES_HOME:    {HERMES_HOME}")
-    print(f"HERMESUME_HOME: {HERMESUME_HOME}")
+    print(f"HERMESYUME_HOME: {HERMESYUME_HOME}")
 
     for d in (DREAM_LOG_DIR, MEMORY_ARCHIVE_DIR, EPISODE_ARCHIVE_DIR):
         os.makedirs(d, exist_ok=True)
@@ -75,7 +75,7 @@ def main() -> int:
         if raw.strip() != serialize(entries):
             print(f"[!] {os.path.basename(path)} does not round-trip through the "
                   "§-delimited format; Hermes will refuse to write it (drift guard). "
-                  "Fix it before running Hermesume.")
+                  "Fix it before running HermesYume.")
             problems += 1
 
     # providers
@@ -84,7 +84,7 @@ def main() -> int:
         print("[!] OPENAI_API_KEY is not set")
         problems += 1
 
-    print("\nAll good. Try: python hermesume.py --dry-run" if not problems
+    print("\nAll good. Try: python hermesyume.py --dry-run" if not problems
           else f"\n{problems} problem(s) found.")
     return 1 if problems else 0
 

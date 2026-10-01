@@ -1,0 +1,14 @@
+[Unit]
+Description=HermesYume -- Hermes Agent memory consolidation
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=YOUR_USER
+EnvironmentFile=/home/YOUR_USER/.env
+Environment=HERMES_HOME=/home/YOUR_USER/.hermes
+Environment=HERMESYUME_HOME=/home/YOUR_USER/.hermesyume
+WorkingDirectory=/path/to/hermesyume
+ExecStart=/usr/bin/python3 hermesyume.py --verbose
+StandardOutput=append:/home/YOUR_USER/.hermesyume/dream-log/cron.log
+StandardError=append:/home/YOUR_USER/.hermesyume/dream-log/cron.log

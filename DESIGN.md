@@ -1,11 +1,11 @@
-# Hermesume: Neuroscience-Inspired Memory Consolidation for Hermes Agent
+# HermesYume: Neuroscience-Inspired Memory Consolidation for Hermes Agent
 
 ## Background
 
 Port of Dreamer (OpenClaw + LanceDB) to Hermes Agent. The neuroscience model is
 unchanged; the storage model is different, and that changes the design.
 
-| | Dreamer (OpenClaw) | Hermesume (Hermes) |
+| | Dreamer (OpenClaw) | HermesYume (Hermes) |
 |---|---|---|
 | Episodic store | daily markdown files | `state.db` sessions/messages (SQLite) |
 | Semantic store | LanceDB, unbounded, recalled by vector search | `MEMORY.md` + `USER.md`, bounded (2,200 / 1,375 chars), always in the prompt |
@@ -17,7 +17,7 @@ unchanged; the storage model is different, and that changes the design.
 ### Complementary Learning Systems (McClelland, 1995)
 - Hippocampus (fast, episodic) = `state.db`
 - Neocortex (slow, schematic) = `MEMORY.md` / `USER.md`
-- Transfer between the two during sleep = Hermesume
+- Transfer between the two during sleep = HermesYume
 
 ### Sleep Stage Roles
 - **NREM**: hippocampal replay; extraction of what generalizes.
@@ -77,8 +77,8 @@ unchanged; the storage model is different, and that changes the design.
 ## File Structure
 
 ```
-hermesume/
-├── hermesume.py      # entry point (NREM -> REM -> Dream Log)
+hermesyume/
+├── hermesyume.py     # entry point (NREM -> REM -> Dream Log)
 ├── config.py         # configuration
 ├── sessions.py       # state.db reader (read-only) + cursor
 ├── hermes_memory.py  # MEMORY.md/USER.md format, lock, atomic write, threat scan

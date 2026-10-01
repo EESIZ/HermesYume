@@ -1,6 +1,6 @@
 """Sidecar metadata for Hermes memory entries.
 
-MEMORY.md / USER.md are plain text -- no importance, no timestamps. Hermesume
+MEMORY.md / USER.md are plain text -- no importance, no timestamps. HermesYume
 keeps that bookkeeping next to them, keyed by a hash of the entry text:
 
   {"<target>:<sha1>": {"importance": 0.7, "first_seen": ts,

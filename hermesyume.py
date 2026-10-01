@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Hermesume (Hermes + Yume/夢): sleep-time memory consolidation for Hermes Agent.
+"""HermesYume (Hermes + Yume/夢): sleep-time memory consolidation for Hermes Agent.
 
 Runs NREM -> REM -> Dream Log, like a sleeping brain.
 
 Usage:
-    python3 hermesume.py              # full dream cycle
-    python3 hermesume.py --dry-run    # plan only: nothing written to Hermes
-    python3 hermesume.py --nrem-only  # extract facts, don't touch memory files
+    python3 hermesyume.py              # full dream cycle
+    python3 hermesyume.py --dry-run    # plan only: nothing written to Hermes
+    python3 hermesyume.py --nrem-only  # extract facts, don't touch memory files
 """
 
 import argparse
@@ -28,11 +28,11 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-log = logging.getLogger("hermesume")
+log = logging.getLogger("hermesyume")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Hermesume -- Hermes Agent memory consolidation")
+    parser = argparse.ArgumentParser(description="HermesYume -- Hermes Agent memory consolidation")
     parser.add_argument("--nrem-only", action="store_true",
                         help="Only replay sessions and extract facts (no memory writes)")
     parser.add_argument("--dry-run", action="store_true",
@@ -48,7 +48,7 @@ def main():
         log.warning("=== DRY RUN -- Hermes memory will not be modified ===")
 
     log.info("=" * 60)
-    log.info("Hermesume falling asleep... (HERMES_HOME=%s)", HERMES_HOME)
+    log.info("HermesYume falling asleep... (HERMES_HOME=%s)", HERMES_HOME)
     log.info("=" * 60)
     start = time.time()
     now = time.time()
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        log.error("Hermesume failed: %s: %s", type(e).__name__, e)
+        log.error("HermesYume failed: %s: %s", type(e).__name__, e)
         try:
             from alerts import send_alert
             send_alert(e)

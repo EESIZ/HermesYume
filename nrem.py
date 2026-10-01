@@ -23,7 +23,7 @@ from embedder import cosine_similarity, embed_texts
 from llm import extract_facts
 from sessions import chunk_episode, chunk_session, load_episode_files, load_sessions
 
-log = logging.getLogger("hermesume.nrem")
+log = logging.getLogger("hermesyume.nrem")
 
 
 def entry_vectors(target: str, entries: list[str], meta) -> list[list[float]]:

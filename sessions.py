@@ -6,10 +6,10 @@ Hermes persists every CLI / messaging session in SQLite ($HERMES_HOME/state.db):
            _compressed_summary, ...)
 
 This is the "hippocampus": raw episodes. The database is opened READ-ONLY;
-Hermesume never writes to it. A cursor (last processed activity timestamp)
-lives in $HERMESUME_HOME/state.json.
+HermesYume never writes to it. A cursor (last processed activity timestamp)
+lives in $HERMESYUME_HOME/state.json.
 
-Optional: markdown episode files (YYYY-MM-DD*.md) in $HERMESUME_HOME/episodes/
+Optional: markdown episode files (YYYY-MM-DD*.md) in $HERMESYUME_HOME/episodes/
 are read as well, for notes produced outside Hermes.
 """
 
@@ -36,7 +36,7 @@ from config import (
 )
 from hermes_memory import read_json, write_json
 
-log = logging.getLogger("hermesume.sessions")
+log = logging.getLogger("hermesyume.sessions")
 
 # Hermes stores list/dict (multimodal) content as this prefix + JSON.
 _CONTENT_JSON_PREFIX = "\x00json:"

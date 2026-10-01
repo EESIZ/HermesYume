@@ -1,4 +1,4 @@
-# Hermesume
+# HermesYume
 
 **Hermes + Yume(夢, 꿈)**: [Hermes Agent](https://github.com/NousResearch/hermes-agent)를 위한 수면 중 기억 정리기.
 
@@ -22,7 +22,7 @@ Hermes의 기본 메모리는 의도적으로 작고 선별적이다.
 
 즉 Hermes에는 해마(`state.db`, 원본 에피소드)와 작은 신피질(`MEMORY.md`/`USER.md`, 항상 켜진 지식)이 이미 있다. 빠진 것은 **수면**이다. 하루 중 중요한 내용을 한쪽에서 다른 쪽으로 옮기고, 낡은 사실을 병합하고, 파일이 가득 찼을 때 무엇을 잊을지 정하는 과정이 따로 없다. 지금은 에이전트가 대화 도중에, 다른 일을 하면서 직접 써야 한다.
 
-Hermesume이 그 오프라인 과정을 맡는다.
+HermesYume이 그 오프라인 과정을 맡는다.
 
 ## 작동 원리
 
@@ -43,7 +43,7 @@ Hermesume이 그 오프라인 과정을 맡는다.
 ~/.hermes/memories/MEMORY.md, USER.md  (Hermes와 같은 락으로 원자적으로 기록)
         │
         ▼
-   Dream Log  (~/.hermesume/dream-log/YYYY-MM-DD_HHMM.md)
+   Dream Log  (~/.hermesyume/dream-log/YYYY-MM-DD_HHMM.md)
 ```
 
 ### Phase 1: NREM: "오늘 무슨 일이 있었지?"
@@ -69,7 +69,7 @@ Hermesume이 그 오프라인 과정을 맡는다.
 - `state.db`는 `mode=ro`로 열며 절대 쓰지 않는다.
 - 메모리 파일은 Hermes와 같은 방식으로 쓴다. `MEMORY.md.lock`에 배타적 `flock`을 걸고, 임시 파일에 쓴 뒤 `os.replace`한다. 출력은 `§` 포맷으로 정확히 왕복되므로 Hermes의 drift guard를 통과한다. Hermes의 `MemoryStore`로 결과물을 직접 읽어서 확인했다.
 - 계획은 스냅샷 기준으로 세우지만 적용은 *현재* 파일에 한다. 그 사이 에이전트가 바꾼 항목에 대한 작업은 건너뛴다. 하드 한도를 넘게 되면 우리가 추가한 것부터 되돌린다.
-- 매번 쓰기 전에 `~/.hermesume/memory-archive/<timestamp>/`에 원본을 백업한다.
+- 매번 쓰기 전에 `~/.hermesyume/memory-archive/<timestamp>/`에 원본을 백업한다.
 - Hermes는 세션 시작 시점의 메모리를 고정해서 쓰므로, 변경 사항은 **다음 세션**부터 반영된다.
 
 ## 빠른 시작
@@ -78,24 +78,24 @@ Hermesume이 그 오프라인 과정을 맡는다.
 pip install -r requirements.txt      # pyyaml(선택)뿐, 핵심 코드는 표준 라이브러리
 cp .env.example .env                 # OPENAI_API_KEY 설정 또는 ollama 사용
 python doctor.py                     # state.db, 메모리 파일, 한도, 키 점검
-python hermesume.py --dry-run -v     # 계획만 세우고 dream log만 기록
-python hermesume.py -v               # 실제 실행
+python hermesyume.py --dry-run -v     # 계획만 세우고 dream log만 기록
+python hermesyume.py -v               # 실제 실행
 ```
 
 cron이나 `examples/`의 systemd 유닛으로 매일 밤 실행한다.
 
 ```bash
-0 3 * * * /path/to/hermesume/examples/run-hermesume.sh
+0 3 * * * /path/to/hermesyume/examples/run-hermesyume.sh
 ```
 
 OpenClaw 버전과 달리 `session-flush` 단계가 필요 없다. Hermes는 메시지를 받는 즉시 `state.db`에 저장한다.
 
 ### Hermes 프로필
 
-`HERMES_HOME`을 프로필 디렉터리로 지정하고, 프로필마다 `HERMESUME_HOME`을 따로 둔다.
+`HERMES_HOME`을 프로필 디렉터리로 지정하고, 프로필마다 `HERMESYUME_HOME`을 따로 둔다.
 
 ```bash
-HERMES_HOME=~/.hermes/profiles/work HERMESUME_HOME=~/.hermesume-work python hermesume.py
+HERMES_HOME=~/.hermes/profiles/work HERMESYUME_HOME=~/.hermesyume-work python hermesyume.py
 ```
 
 ## 설정
@@ -105,23 +105,23 @@ HERMES_HOME=~/.hermes/profiles/work HERMESUME_HOME=~/.hermesume-work python herm
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `HERMES_HOME` | `~/.hermes` | Hermes 홈(또는 프로필 디렉터리) |
-| `HERMESUME_HOME` | `~/.hermesume` | 커서, 메타데이터, 로그, 아카이브 |
-| `HERMESUME_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama`, `sentence-transformers` |
-| `HERMESUME_LLM_PROVIDER` | `openai` | `openai`(OpenAI 호환 URL 모두), `ollama`, `minimax` |
+| `HERMESYUME_HOME` | `~/.hermesyume` | 커서, 메타데이터, 로그, 아카이브 |
+| `HERMESYUME_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama`, `sentence-transformers` |
+| `HERMESYUME_LLM_PROVIDER` | `openai` | `openai`(OpenAI 호환 URL 모두), `ollama`, `minimax` |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | 예: OpenRouter |
-| `HERMESUME_OPENAI_LLM_MODEL` | `gpt-4.1-nano` | |
-| `HERMESUME_FILL_RATIO` | `0.85` | Hermes 한도 대비 채울 비율 |
-| `HERMESUME_DECAY_RATE` | `0.01` | 강화 없이 하루 지날 때마다 줄어드는 중요도 |
-| `HERMESUME_FORGET_THRESHOLD` | `0` | 0보다 크면 예산이 남아도 희미해진 항목을 잊음 |
-| `HERMESUME_KEEP_PREV_STATE` | `true` | 상태 변경 병합 시 짧은 "(prev: …)" 유지 |
-| `HERMESUME_EXCLUDE_SOURCES` | `cron` | 제외할 세션 source (쉼표 구분) |
-| `HERMESUME_INCLUDE_TOOL_MESSAGES` | `false` | 도구 출력도 사용 (위험 증가) |
-| `HERMESUME_SESSION_SETTLE_SECONDS` | `1800` | 이보다 최근에 활동한 세션은 건너뜀 |
-| `HERMESUME_MAX_NEW_FACTS` | `12` | 실행당 최대 신규 사실 수 |
-| `HERMESUME_ENTRY_MAX_CHARS` | `220` | 항목 하나의 최대 길이 |
-| `HERMESUME_ALERT_PROVIDER` | (꺼짐) | `telegram`, `slack`, `webhook`. 에러는 에이전트가 아닌 운영자에게만 보낸다 |
+| `HERMESYUME_OPENAI_LLM_MODEL` | `gpt-4.1-nano` | |
+| `HERMESYUME_FILL_RATIO` | `0.85` | Hermes 한도 대비 채울 비율 |
+| `HERMESYUME_DECAY_RATE` | `0.01` | 강화 없이 하루 지날 때마다 줄어드는 중요도 |
+| `HERMESYUME_FORGET_THRESHOLD` | `0` | 0보다 크면 예산이 남아도 희미해진 항목을 잊음 |
+| `HERMESYUME_KEEP_PREV_STATE` | `true` | 상태 변경 병합 시 짧은 "(prev: …)" 유지 |
+| `HERMESYUME_EXCLUDE_SOURCES` | `cron` | 제외할 세션 source (쉼표 구분) |
+| `HERMESYUME_INCLUDE_TOOL_MESSAGES` | `false` | 도구 출력도 사용 (위험 증가) |
+| `HERMESYUME_SESSION_SETTLE_SECONDS` | `1800` | 이보다 최근에 활동한 세션은 건너뜀 |
+| `HERMESYUME_MAX_NEW_FACTS` | `12` | 실행당 최대 신규 사실 수 |
+| `HERMESYUME_ENTRY_MAX_CHARS` | `220` | 항목 하나의 최대 길이 |
+| `HERMESYUME_ALERT_PROVIDER` | (꺼짐) | `telegram`, `slack`, `webhook`. 에러는 에이전트가 아닌 운영자에게만 보낸다 |
 
-선택 사항: `$HERMESUME_HOME/episodes/`에 `YYYY-MM-DD*.md` 형식의 마크다운 노트를 넣으면 함께 처리한 뒤 아카이브한다.
+선택 사항: `$HERMESYUME_HOME/episodes/`에 `YYYY-MM-DD*.md` 형식의 마크다운 노트를 넣으면 함께 처리한 뒤 아카이브한다.
 
 ## 한계
 

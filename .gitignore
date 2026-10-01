@@ -5,6 +5,6 @@ __pycache__/
 dist/
 build/
 .venv/
-hermesume.service
-hermesume.timer
-run-hermesume.sh
+hermesyume.service
+hermesyume.timer
+run-hermesyume.sh

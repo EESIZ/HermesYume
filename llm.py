@@ -17,7 +17,7 @@ from config import (
     PREV_STATE_MAX_CHARS,
 )
 
-log = logging.getLogger("hermesume.llm")
+log = logging.getLogger("hermesyume.llm")
 
 
 def _call_openai(messages: list[dict], max_tokens: int = 1024) -> str:

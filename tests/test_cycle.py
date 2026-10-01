@@ -15,10 +15,10 @@ import tempfile
 import time
 import unittest
 
-TMP = tempfile.mkdtemp(prefix="hermesume-test-")
+TMP = tempfile.mkdtemp(prefix="hermesyume-test-")
 os.environ["HERMES_HOME"] = os.path.join(TMP, "hermes")
-os.environ["HERMESUME_HOME"] = os.path.join(TMP, "hermesume")
-os.environ["HERMESUME_SESSION_SETTLE_SECONDS"] = "60"
+os.environ["HERMESYUME_HOME"] = os.path.join(TMP, "hermesyume")
+os.environ["HERMESYUME_SESSION_SETTLE_SECONDS"] = "60"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import embedder  # noqa: E402
@@ -64,7 +64,7 @@ embedder.embed_texts = fake_embed
 llm.llm_call = fake_llm
 
 import hermes_memory  # noqa: E402
-import hermesume  # noqa: E402
+import hermesyume  # noqa: E402
 import nrem  # noqa: E402
 import rem  # noqa: E402
 nrem.embed_texts = fake_embed
@@ -124,14 +124,14 @@ class DreamCycleTest(unittest.TestCase):
 
         # dry run: plan + dream log only
         files = {n: open(os.path.join(MEMDIR, n)).read() for n in ("MEMORY.md", "USER.md")}
-        sys.argv = ["hermesume.py", "--dry-run"]
-        hermesume.main()
+        sys.argv = ["hermesyume.py", "--dry-run"]
+        hermesyume.main()
         for n, content in files.items():
             self.assertEqual(content, open(os.path.join(MEMDIR, n)).read())
-        self.assertFalse(os.path.exists(os.path.join(os.environ["HERMESUME_HOME"], "state.json")))
+        self.assertFalse(os.path.exists(os.path.join(os.environ["HERMESYUME_HOME"], "state.json")))
 
-        sys.argv = ["hermesume.py"]
-        hermesume.main()
+        sys.argv = ["hermesyume.py"]
+        hermesyume.main()
 
         mem = hermes_memory.read_entries("memory")
         user = hermes_memory.read_entries("user")
@@ -150,10 +150,10 @@ class DreamCycleTest(unittest.TestCase):
         limit = 2200
         self.assertLessEqual(hermes_memory.char_count(mem), int(limit * 0.85))
         # cron source and unsettled session were not replayed
-        state = json.load(open(os.path.join(os.environ["HERMESUME_HOME"], "state.json")))
+        state = json.load(open(os.path.join(os.environ["HERMESYUME_HOME"], "state.json")))
         self.assertLess(state["session_cursor"], now - 60)
         # backups + forgotten archive exist
-        archive = os.path.join(os.environ["HERMESUME_HOME"], "memory-archive")
+        archive = os.path.join(os.environ["HERMESYUME_HOME"], "memory-archive")
         forgotten = [json.loads(l) for l in open(os.path.join(archive, "forgotten.jsonl"))]
         self.assertTrue(forgotten)
         self.assertTrue(all(x["text"].startswith("Note") for x in forgotten), forgotten)
@@ -164,7 +164,7 @@ class DreamCycleTest(unittest.TestCase):
 
         # second run: nothing new to replay -> no changes
         before = open(os.path.join(MEMDIR, "MEMORY.md")).read()
-        hermesume.main()
+        hermesyume.main()
         self.assertEqual(before, open(os.path.join(MEMDIR, "MEMORY.md")).read())
 
     def test_apply_ops_respects_concurrent_agent_edit(self):

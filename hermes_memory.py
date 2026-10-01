@@ -35,7 +35,7 @@ try:
 except ImportError:  # Windows: Hermes uses msvcrt there; we degrade to no lock
     fcntl = None
 
-log = logging.getLogger("hermesume.memory")
+log = logging.getLogger("hermesyume.memory")
 
 TARGETS = ("memory", "user")
 FILENAMES = {"memory": "MEMORY.md", "user": "USER.md"}
