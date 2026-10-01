@@ -1,3 +1,5 @@
-lancedb>=0.6
-pyarrow>=15.0
-pandas
+# Hermesume core uses only the Python standard library.
+# Optional:
+#   pyyaml                 - exact parsing of $HERMES_HOME/config.yaml
+#   sentence-transformers  - local embeddings (HERMESUME_EMBEDDING_PROVIDER=sentence-transformers)
+pyyaml

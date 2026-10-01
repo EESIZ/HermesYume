@@ -1,7 +1,7 @@
-"""Error alerting for Dreamer.
+"""Error alerting for Hermesume.
 
 Sends failure notifications to the operator (never to the AI agent).
-Dreamer runs as an invisible background process — the agent must not
+Hermesume runs as an invisible background process — the agent must not
 know it exists, so alerts bypass the agent session entirely.
 
 Supported providers: telegram, slack, webhook (generic POST).
@@ -20,7 +20,7 @@ from config import (
     ALERT_WEBHOOK_URL,
 )
 
-log = logging.getLogger("dreamer.alerts")
+log = logging.getLogger("hermesume.alerts")
 
 
 def _post_json(url: str, payload: dict, timeout: int = 10) -> bool:
@@ -60,7 +60,7 @@ def _send_webhook(text: str, error: str) -> bool:
         log.warning("Webhook alert skipped: missing URL")
         return False
     return _post_json(ALERT_WEBHOOK_URL, {
-        "source": "dreamer",
+        "source": "hermesume",
         "text": text,
         "error": error,
     })
@@ -87,16 +87,16 @@ def send_alert(error: Exception) -> bool:
 
     if provider == "telegram":
         text = (
-            f"{icon} <b>Dreamer Error</b>\n\n"
+            f"{icon} <b>Hermesume Error</b>\n\n"
             f"{summary}\n"
             f"<code>{err_type}: {detail}</code>"
         )
         ok = _send_telegram(text)
     elif provider == "slack":
-        text = f"{icon} *Dreamer Error*\n{summary}\n```{err_type}: {detail}```"
+        text = f"{icon} *Hermesume Error*\n{summary}\n```{err_type}: {detail}```"
         ok = _send_slack(text)
     elif provider == "webhook":
-        text = f"{icon} Dreamer Error: {summary}"
+        text = f"{icon} Hermesume Error: {summary}"
         ok = _send_webhook(text, f"{err_type}: {detail}")
     else:
         log.warning("Unknown alert provider: %s", provider)

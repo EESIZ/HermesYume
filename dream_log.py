@@ -1,107 +1,93 @@
-"""Dream log: generate a summary of each dream session."""
+"""Dream log: a human-readable report of each dream cycle."""
 
 import logging
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 from config import DREAM_LOG_DIR
 
-log = logging.getLogger("dreamer.log")
+log = logging.getLogger("hermesume.log")
 
-KST = timezone(timedelta(hours=9))
+LABELS = {"memory": "MEMORY.md (agent notes)", "user": "USER.md (user profile)"}
 
 
-def write_dream_log(nrem_result: dict, rem_result: dict) -> str:
-    """Write a dream log markdown file summarizing the session.
+def _q(text: str, n: int = 160) -> str:
+    text = text.replace("\n", " ").replace("`", "'")
+    return f"`{text[:n]}{'...' if len(text) > n else ''}`"
 
-    Returns the path to the written log file.
-    """
+
+def write_dream_log(nrem: dict, rem: dict, dry_run: bool = False) -> str:
     os.makedirs(DREAM_LOG_DIR, exist_ok=True)
-
-    now = datetime.now(KST)
-    filename = now.strftime("%Y-%m-%d_%H%M") + ".md"
-    filepath = os.path.join(DREAM_LOG_DIR, filename)
+    now = datetime.now().astimezone()
+    suffix = "_dry-run" if dry_run else ""
+    filepath = os.path.join(DREAM_LOG_DIR, now.strftime("%Y-%m-%d_%H%M") + suffix + ".md")
 
     lines = [
-        f"# Dream Log -- {now.strftime('%Y-%m-%d %H:%M KST')}",
+        f"# Dream Log -- {now.strftime('%Y-%m-%d %H:%M %Z')}" + (" (dry run)" if dry_run else ""),
         "",
-        "## NREM Phase (Episode -> Semantic)",
+        "## NREM (sessions -> facts)",
         "",
-        f"- Episodes processed: {nrem_result.get('episodes', 0)}",
-        f"- Chunks generated: {nrem_result.get('chunks', 0)}",
-        f"- Clusters formed: {nrem_result.get('clusters', 0)}",
-        f"- **New semantic memories: {nrem_result.get('created', 0)}**",
-        f"- Duplicates skipped: {nrem_result.get('skipped_dup', 0)}",
-        f"- Reference docs created: {nrem_result.get('docs_created', 0)}",
+        f"- Sessions replayed: {nrem.get('sessions', 0)}",
+        f"- Extra episode files: {len(nrem.get('episode_files', []))}",
+        f"- Chunks: {nrem.get('chunks', 0)}",
+        f"- Clusters: {nrem.get('clusters', 0)}",
+        f"- **New facts: {len(nrem.get('facts', []))}**",
+        f"- Already known (reinforced): {nrem.get('skipped_dup', 0)}",
         "",
     ]
-
-    dates = nrem_result.get("processed_dates", [])
-    if dates:
-        lines.append("### Processed Episode Dates")
-        for d in dates:
-            lines.append(f"- {d}")
+    for f in nrem.get("facts", []):
+        lines.append(f"- [{f['target']}] ({f.get('importance', 0.5):.2f}) {_q(f['text'])}")
+    if nrem.get("facts"):
         lines.append("")
 
-    lines.extend([
-        "## REM Phase (Integration + Pruning)",
-        "",
-        f"- Total semantic memories: {rem_result.get('total_memories', 0)}",
-        f"- Conflicts found: {rem_result.get('conflicts_found', rem_result.get('contradictions', 0))}",
-        f"- **Merged (state changes): {rem_result.get('merged', 0)}**",
-        f"- **Consolidated (aspects): {rem_result.get('consolidated', 0)}**",
-        f"- Deleted: {rem_result.get('deleted', rem_result.get('resolved', 0))}",
-        f"- Split created: {rem_result.get('split_created', 0)}",
-        f"- Importance decay applied: {rem_result.get('decayed', 0)}",
-        f"- **Soft-deleted: {rem_result.get('soft_deleted', 0)}**",
-        f"- Episodes archived: {rem_result.get('archived', 0)}",
-        "",
-    ])
-
-    # Merge details
-    merge_details = rem_result.get("merge_details", [])
-    if merge_details:
-        lines.extend(["### Merge Details (State Changes)", ""])
-        for i, m in enumerate(merge_details, 1):
-            lines.append(f"**{i}.** Before:")
-            for before_text in m["before"]:
-                lines.append(f"  - `{before_text[:100]}`")
-            lines.append(f"  After: `{m['after'][:150]}`")
+    for target, r in rem.get("targets", {}).items():
+        pct = 100 * r["after_chars"] / r["limit"] if r["limit"] else 0
+        lines += [
+            f"## REM -- {LABELS.get(target, target)}",
+            "",
+            f"- Size: {r['before_chars']} -> **{r['after_chars']}** chars "
+            f"({pct:.0f}% of {r['limit']}, budget {r['budget']})",
+            f"- Entries: {r['entries_before']} -> {r['entries_after']}",
+            f"- Added: {len(r['added'])} / Merged: {len(r['merged'])} / "
+            f"Consolidated: {len(r['consolidated'])} / Shortened: {len(r['shortened'])} / "
+            f"Forgotten: {len(r['forgotten'])} / Reinforced: {r['reinforced']}",
+            "",
+        ]
+        if r["added"]:
+            lines += ["### Added", ""] + [f"- {_q(t)}" for t in r["added"]] + [""]
+        if r["merged"]:
+            lines += ["### Merged (state changes)", ""]
+            for m in r["merged"]:
+                lines += [f"- {_q(b, 100)}" for b in m["before"]]
+                lines += [f"  -> {_q(m['after'])}", ""]
+        if r["consolidated"]:
+            lines += ["### Consolidated (different aspects)", ""]
+            for c in r["consolidated"]:
+                lines += [f"- {_q(b, 100)}" for b in c["before"]]
+                lines += [f"  -> {_q(a)}" for a in c["after"]] + [""]
+        if r["shortened"]:
+            lines += ["### Shortened", ""]
+            for s in r["shortened"]:
+                lines += [f"- {_q(s['before'], 100)}", f"  -> {_q(s['after'])}"]
+            lines.append("")
+        if r["forgotten"]:
+            lines += ["### Forgotten (archived in memory-archive/forgotten.jsonl)", ""]
+            lines += [f"- ({x['score']:.2f}, {x['reason']}) {_q(x['text'])}" for x in r["forgotten"]]
+            lines.append("")
+        if r["blocked"]:
+            lines += ["### Blocked", ""]
+            lines += [f"- ({x['reason']}) {_q(x['text'])}" for x in r["blocked"]]
+            lines.append("")
+        if r["ops_skipped"]:
+            lines += ["### Skipped at write time", ""]
+            for op in r["ops_skipped"]:
+                what = op.get("text") or op.get("old", "")
+                lines.append(f"- {op['op']} ({op['reason']}): {_q(what, 100)}")
             lines.append("")
 
-    # Consolidation details
-    cons_details = rem_result.get("consolidation_details", [])
-    if cons_details:
-        lines.extend(["### Consolidation Details (Different Aspects)", ""])
-        for i, c in enumerate(cons_details, 1):
-            lines.append(f"**{i}.** Before:")
-            for before_text in c["before"]:
-                lines.append(f"  - `{before_text[:100]}`")
-            lines.append("  After:")
-            for after_text in c["after"]:
-                lines.append(f"  - `{after_text[:150]}`")
-            lines.append("")
-
-    # Summary
-    total_created = nrem_result.get("created", 0) + rem_result.get("split_created", 0)
-    total_deleted = rem_result.get("deleted", rem_result.get("resolved", 0)) + rem_result.get("soft_deleted", 0)
-    net = total_created - total_deleted
-
-    lines.extend([
-        "## Summary",
-        "",
-        f"- Net memory change: {'+' if net >= 0 else ''}{net}",
-        f"  (created {total_created} - deleted {total_deleted})",
-        "",
-        "---",
-        f"*Generated by Dreamer v0.2 at {now.isoformat()}*",
-        "",
-    ])
-
-    content = "\n".join(lines)
+    lines += ["---", f"*Generated by Hermesume at {now.isoformat()}*", ""]
 
     with open(filepath, "w", encoding="utf-8") as f:
-        f.write(content)
-
+        f.write("\n".join(lines))
     log.info("Dream log written: %s", filepath)
     return filepath

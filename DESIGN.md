@@ -1,97 +1,94 @@
-# Dreamer: Neuroscience-Inspired AI Memory Consolidation
+# Hermesume: Neuroscience-Inspired Memory Consolidation for Hermes Agent
 
 ## Background
 
-Inspired by how the human brain consolidates memories during sleep,
-Dreamer periodically compresses, integrates, and prunes an AI agent's
-LanceDB memory store.
+Port of Dreamer (OpenClaw + LanceDB) to Hermes Agent. The neuroscience model is
+unchanged; the storage model is different, and that changes the design.
+
+| | Dreamer (OpenClaw) | Hermesume (Hermes) |
+|---|---|---|
+| Episodic store | daily markdown files | `state.db` sessions/messages (SQLite) |
+| Semantic store | LanceDB, unbounded, recalled by vector search | `MEMORY.md` + `USER.md`, bounded (2,200 / 1,375 chars), always in the prompt |
+| Forgetting | importance below a threshold | **budget pressure** (homeostasis) |
+| Episode capture | needs a 2 AM `/new` session-flush | none: Hermes persists every message |
 
 ## Scientific Basis
 
 ### Complementary Learning Systems (McClelland, 1995)
-- Hippocampus (fast learning, episodes) + Neocortex (slow learning, patterns/schemas)
-- Transfer between the two systems during sleep is key to memory consolidation
+- Hippocampus (fast, episodic) = `state.db`
+- Neocortex (slow, schematic) = `MEMORY.md` / `USER.md`
+- Transfer between the two during sleep = Hermesume
 
 ### Sleep Stage Roles
-- **NREM**: Hippocampus -> Neocortex memory transfer. Compressed replay via sharp-wave ripples.
-  Synaptic Homeostasis Hypothesis (SHY): global downscaling with selective preservation.
-- **REM**: Integration with existing knowledge, distant associations, synaptic pruning.
+- **NREM**: hippocampal replay; extraction of what generalizes.
+- **REM**: integration with existing knowledge; resolving conflicts.
+- **Synaptic Homeostasis Hypothesis (SHY)**: global downscaling with selective
+  preservation. Hermes' fixed char budget makes this literal: total memory is
+  constant, so strengthening one trace means weakening others.
 
 ### Engram Lifecycle
 - Encoding -> Consolidation -> Retrieval -> Forgetting
-- Forgetting = reduced accessibility, not deletion (index decay)
-- Episodic -> Semantic memory transformation (concrete -> abstract)
+- Forgetting = reduced accessibility, not deletion. Evicted entries stay in
+  `memory-archive/forgotten.jsonl`, and the raw episodes stay in `state.db`,
+  where Hermes' `session_search` can still reach them.
 
-## Memory Architecture
+## Dream Process
 
-### Layer 1: Episodic (Hippocampus)
-- `episodes/YYYY-MM-DD.md` -- daily raw experiences
-- Unstructured text flushed by the AI agent during conversation
-
-### Layer 2: Semantic (Neocortex)
-- `lancedb/memories.lance` -- LanceDB vector database
-- Schema: id, text, vector(1536d), importance(0-1), category, createdAt
-
-### Problems Solved
-- No connection between the two layers (no consolidation process)
-- No importance differentiation (all memories equal weight)
-- Episodes accumulate without being converted to semantic memories
-- Duplicate/contradictory memories not cleaned up
-
-## Dream Process Design
-
-### Phase 1: NREM (Stabilization + Transfer)
+### Phase 1: NREM
 
 ```
-1. Load episodes (episodes/*.md)
-2. Chunk into semantic units
-3. Generate embeddings
-4. Cluster similar chunks (cosine similarity > 0.75)
-5. LLM summarization per cluster -> extract patterns/principles
-6. Dedup check against existing LanceDB memories (similarity > 0.9)
-7. Store new semantic memories (dynamic importance scoring)
+1. Select settled sessions: activity > cursor AND idle >= 30 min,
+   not hidden, source not excluded (cron)
+2. Messages: user/assistant only; originals of compressed sessions
+   (active=1 OR compacted=1, not _compressed_summary)
+3. Chunk into exchanges; embed; greedy cosine clustering (>= 0.75)
+4. LLM extracts durable facts per cluster -> {target: memory|user, text, importance}
+5. Verbatim-known facts reinforce the existing entry; near-duplicates go to REM
 ```
 
-### Phase 2: REM (Integration + Pruning)
+### Phase 2: REM
 
 ```
-8.  Load all semantic memories
-9.  Detect conflicts between NEW and EXISTING (O(N*M), not O(N^2))
-10. Classify: state_change / different_aspects / unrelated
-11. Resolve: merge (state changes) or consolidate (different aspects)
-12. Apply importance decay (unrecalled memories fade)
-13. Soft-delete memories below threshold (0.15)
-14. Archive processed episode files
+6.  For each fact (highest importance first): closest entry by cosine
+7.  sim >= 0.70 -> LLM: duplicate / state_change / different_aspects / unrelated
+8.  duplicate -> reinforce; state_change -> "<new> (prev: <old, 40 chars>)";
+    different_aspects -> consolidate only if it saves space; else add
+9.  Security scan on every candidate entry (injection / exfil / secrets)
+10. Homeostasis: while chars > limit * FILL_RATIO:
+      a. LLM-shorten the longest entries (max 5)
+      b. evict min(score) among entries not touched tonight
+    score = importance - DECAY_RATE * days_since_reinforced
+11. Apply ops to the CURRENT file under flock(<file>.lock), atomic replace,
+    skip ops whose target entry changed, never exceed the hard limit
 ```
 
 ### Phase 3: Dream Log
 
 ```
-15. Generate summary report -> dream-log/YYYY-MM-DD_HHMM.md
-    - New semantic memories created
-    - Memories merged/consolidated
-    - Memories soft-deleted
-    - Conflicts found and resolved
+12. dream-log/YYYY-MM-DD_HHMM.md: facts, per-file ops, size before/after
 ```
 
-## Execution
+## State
 
-- Daily cron job (recommended: 3 AM)
-- LLM: OpenAI gpt-4.1-nano (default) or MiniMax M2.5 (low-cost alternative)
-- Embeddings: OpenAI text-embedding-3-small
+- `state.json`: session cursor (max activity timestamp processed)
+- `meta.json`: `"<target>:<sha1(entry)>" -> importance, first_seen,
+  last_reinforced, cached embedding`. Pruned to live entries after each run.
 
 ## File Structure
 
 ```
-dreamer/
-├── DESIGN.md          # this document
-├── config.py          # configuration
-├── dreamer.py         # main entry point
-├── nrem.py            # Phase 1: episode -> semantic conversion
-├── rem.py             # Phase 2: integration + pruning
-├── embedder.py        # OpenAI embedding generation
-├── lancedb_store.py   # LanceDB read/write operations
-├── llm.py             # LLM calls (summarization/classification)
-├── dream_log.py       # dream log generation
-└── requirements.txt
+hermesume/
+├── hermesume.py      # entry point (NREM -> REM -> Dream Log)
+├── config.py         # configuration
+├── sessions.py       # state.db reader (read-only) + cursor
+├── hermes_memory.py  # MEMORY.md/USER.md format, lock, atomic write, threat scan
+├── meta.py           # sidecar importance / reinforcement / decay
+├── nrem.py           # Phase 1
+├── rem.py            # Phase 2
+├── llm.py            # extraction / classification / merging prompts
+├── embedder.py       # embeddings (openai / ollama / sentence-transformers)
+├── dream_log.py      # Phase 3
+├── alerts.py         # operator alerts
+├── doctor.py         # environment check
+└── tests/
 ```

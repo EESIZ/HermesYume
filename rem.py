@@ -1,320 +1,225 @@
-"""REM Phase: Memory integration, pruning, and maintenance.
-
-v0.2: 3-tier conflict resolution (merge/consolidate/retain) replacing simple delete.
-Compares only new memories (M) against existing (N) for O(N*M) efficiency.
+"""REM Phase: integrate new facts into MEMORY.md / USER.md, then downscale.
 
 Like REM sleep:
-1. Load all semantic memories from LanceDB
-2. Detect conflicts between NEW and EXISTING memories
-3. Classify: state_change / different_aspects / unrelated
-4. Resolve: merge (state change) or consolidate (different aspects)
-5. Apply importance decay (memories not recalled fade)
-6. Soft-delete memories below threshold
-7. Archive processed episode files
+1. Compare each new fact only against existing entries (O(N*M))
+2. Classify: duplicate / state_change / different_aspects / unrelated
+3. Resolve: reinforce, merge (newer state wins), consolidate, or add
+4. Synaptic homeostasis: Hermes memory is bounded (2,200 / 1,375 chars by
+   default). If a file is over its budget, compress long entries first, then
+   forget the entries with the lowest decayed importance (archived, not lost)
+5. Write the result back under Hermes' own file lock, atomically
+
+Hermes reads these files once per session (frozen snapshot), so the agent
+wakes up with the consolidated memory at its next session.
 """
 
 import json
 import logging
 import os
-import shutil
-import time
 
 from config import (
-    ARCHIVE_DIR,
     CONTRADICTION_SIMILARITY,
-    EPISODE_DIR,
-    IMPORTANCE_DECAY_RATE,
-    IMPORTANCE_FLOOR,
+    ENTRY_MAX_CHARS,
+    FILL_RATIO,
+    FORGET_THRESHOLD,
+    KEEP_PREV_STATE,
     MEMORY_ARCHIVE_DIR,
-    MERGE_MIN_LENGTH,
-    SOFT_DELETE_THRESHOLD,
+    PREV_STATE_MAX_CHARS,
 )
-from embedder import cosine_similarity, embed_texts
-from lancedb_store import (
-    add_memory,
-    delete_memory,
-    load_all_memories,
-    update_importance,
-    update_memory_text,
-)
-from llm import classify_relationship, consolidate_aspects, merge_state_change
+from embedder import embed_texts
+from hermes_memory import apply_ops, char_count, clean_entry, threat_findings
+from llm import classify_relationship, consolidate_aspects, merge_state_change, shorten_entry
+from nrem import best_match, entry_vectors
 
-log = logging.getLogger("dreamer.rem")
+log = logging.getLogger("hermesume.rem")
 
-
-def archive_memory_backup(mem: dict):
-    """Write a memory to archive before modifying/deleting it."""
-    os.makedirs(MEMORY_ARCHIVE_DIR, exist_ok=True)
-    filepath = os.path.join(MEMORY_ARCHIVE_DIR, f"{mem['id'][:8]}.json")
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump({
-            "id": mem["id"],
-            "text": mem["text"],
-            "importance": mem.get("importance", 0),
-            "category": mem.get("category", ""),
-            "createdAt": mem.get("createdAt", 0),
-            "archived_reason": "pre-merge-backup",
-        }, f, ensure_ascii=False, indent=2)
-    log.info("Archived memory backup: %s", mem["id"][:8])
+MAX_SHORTEN_PER_RUN = 5
+# A merged state change may exceed ENTRY_MAX_CHARS by its "(prev: ...)" trace.
+MERGED_MAX_CHARS = ENTRY_MAX_CHARS + PREV_STATE_MAX_CHARS + 12
 
 
-def find_conflicts(memories: list[dict],
-                   new_ids: set[str]) -> list[tuple[dict, dict, dict]]:
-    """Find conflicts between NEW memories and ALL memories.
+class Plan:
+    """Planned edits for one target, simulated on a working copy."""
 
-    Only compares each new memory against existing ones (not new vs new).
-    Returns list of (mem_new, mem_existing, classification) tuples.
-    """
-    conflicts = []
-    new_mems = [m for m in memories if m["id"] in new_ids]
-    checked_pairs = set()
+    def __init__(self, target: str, entries: list[str], vectors: list, meta, now: float):
+        self.target = target
+        self.entries = list(entries)
+        self.vectors = list(vectors)
+        self.meta = meta
+        self.now = now
+        self.ops: list[dict] = []
+        self.touched: set[str] = set()   # entries created/changed tonight
+        self.details = {"added": [], "merged": [], "consolidated": [],
+                        "shortened": [], "forgotten": [], "blocked": [],
+                        "reinforced": 0}
 
-    for new_mem in new_mems:
-        if not new_mem.get("vector"):
-            continue
-        for other in memories:
-            if other["id"] == new_mem["id"]:
-                continue
-            if not other.get("vector"):
-                continue
-            # Skip new-vs-new (same batch protection)
-            if other["id"] in new_ids:
-                continue
-            # Avoid duplicate pair checks
-            pair_key = tuple(sorted([new_mem["id"], other["id"]]))
-            if pair_key in checked_pairs:
-                continue
-            checked_pairs.add(pair_key)
+    def add(self, text: str, vector, importance: float):
+        self.ops.append({"op": "add", "text": text})
+        self.entries.append(text)
+        self.vectors.append(vector)
+        self.touched.add(text)
+        self.meta.set(self.target, text, importance, self.now, vector)
 
-            sim = cosine_similarity(new_mem["vector"], other["vector"])
-            if sim < CONTRADICTION_SIMILARITY:
-                continue
+    def replace(self, old: str, new: list[str], new_vectors: list, importance: float):
+        i = self.entries.index(old)
+        old_meta = self.meta.get(self.target, old, self.now)
+        others = self.entries[:i] + self.entries[i + 1:]
+        kept = [(t, v) for t, v in zip(new, new_vectors) if t not in others]
+        new, new_vectors = [t for t, _ in kept], [v for _, v in kept]
+        self.ops.append({"op": "replace", "old": old, "new": new})
+        self.entries[i:i + 1] = new
+        self.vectors[i:i + 1] = new_vectors
+        for text, vec in zip(new, new_vectors):
+            self.touched.add(text)
+            self.meta.set(self.target, text, max(importance, old_meta["importance"]),
+                          self.now, vec, first_seen=old_meta["first_seen"])
 
-            classification = classify_relationship(
-                new_mem["text"], other["text"]
-            )
-            if classification["type"] != "unrelated":
-                conflicts.append((new_mem, other, classification))
-                log.info(
-                    "Conflict (sim=%.3f, type=%s): '%s' vs '%s'",
-                    sim, classification["type"],
-                    new_mem["text"][:60], other["text"][:60],
-                )
-
-    log.info("Found %d conflicts (%d new vs %d total)",
-             len(conflicts), len(new_mems), len(memories))
-    return conflicts
+    def remove(self, old: str):
+        i = self.entries.index(old)
+        self.ops.append({"op": "remove", "old": old})
+        del self.entries[i]
+        del self.vectors[i]
 
 
-def resolve_conflicts(conflicts: list[tuple[dict, dict, dict]]) -> dict:
-    """Resolve conflicts using 3-tier strategy.
-
-    Returns dict with:
-        merged: list of {"before": [...], "after": str, "kept_id": str}
-        consolidated: list of {"before": [...], "after": [...], "kept_id": str}
-        deleted_ids: list of str
-        created_ids: list of str (from split consolidation)
-    """
-    merged = []
-    consolidated = []
-    deleted_ids = []
-    created_ids = []
-
-    for mem_new, mem_existing, classification in conflicts:
-        # Determine newer/older by timestamp
-        ts_new = mem_new.get("createdAt", 0)
-        ts_existing = mem_existing.get("createdAt", 0)
-        if ts_new >= ts_existing:
-            newer, older = mem_new, mem_existing
-        else:
-            newer, older = mem_existing, mem_new
-
-        # Skip if either was already deleted in this run
-        if newer["id"] in deleted_ids or older["id"] in deleted_ids:
-            continue
-
-        if classification["type"] == "state_change":
-            archive_memory_backup(newer)
-            archive_memory_backup(older)
-
-            merged_text = merge_state_change(newer["text"], older["text"])
-
-            if len(merged_text) < MERGE_MIN_LENGTH:
-                log.warning("Merged text too short (%d chars), skipping",
-                            len(merged_text))
-                continue
-
-            new_vector = embed_texts([merged_text])[0]
-            update_memory_text(newer["id"], merged_text, new_vector)
-            delete_memory(older["id"])
-            deleted_ids.append(older["id"])
-
-            merged.append({
-                "before": [newer["text"], older["text"]],
-                "after": merged_text,
-                "kept_id": newer["id"],
-            })
-            log.info("Merged: '%s' (prev: '%s')",
-                     newer["text"][:40], older["text"][:40])
-
-        elif classification["type"] == "different_aspects":
-            archive_memory_backup(mem_new)
-            archive_memory_backup(mem_existing)
-
-            result_texts = consolidate_aspects(
-                mem_new["text"], mem_existing["text"]
-            )
-
-            if not result_texts or all(len(t) < MERGE_MIN_LENGTH for t in result_texts):
-                log.warning("Consolidation produced empty/short result, skipping")
-                continue
-
-            if len(result_texts) == 1:
-                cons_text = result_texts[0]
-                new_vector = embed_texts([cons_text])[0]
-                update_memory_text(newer["id"], cons_text, new_vector)
-                delete_memory(older["id"])
-                deleted_ids.append(older["id"])
-            else:
-                first_vector = embed_texts([result_texts[0]])[0]
-                update_memory_text(newer["id"], result_texts[0], first_vector)
-                for extra_text in result_texts[1:]:
-                    extra_vector = embed_texts([extra_text])[0]
-                    extra_id = add_memory(
-                        text=extra_text,
-                        vector=extra_vector,
-                        importance=newer.get("importance", 0.5),
-                        category=newer.get("category", "fact"),
-                    )
-                    created_ids.append(extra_id)
-                delete_memory(older["id"])
-                deleted_ids.append(older["id"])
-
-            consolidated.append({
-                "before": [mem_new["text"], mem_existing["text"]],
-                "after": result_texts,
-                "kept_id": newer["id"],
-            })
-            log.info("Consolidated 2 memories into %d", len(result_texts))
-
-    return {
-        "merged": merged,
-        "consolidated": consolidated,
-        "deleted_ids": deleted_ids,
-        "created_ids": created_ids,
-    }
+def _safe(text: str, plan: Plan, max_chars: int) -> str | None:
+    """Clean and vet a candidate entry; None if it must not be written."""
+    text = clean_entry(text)
+    if len(text) > max_chars:
+        shorter = shorten_entry(text, ENTRY_MAX_CHARS)
+        if not shorter or len(shorter) > max_chars:
+            plan.details["blocked"].append({"text": text, "reason": "too long"})
+            return None
+        text = clean_entry(shorter)
+    findings = threat_findings(text)
+    if findings:
+        log.warning("Blocked entry (%s): %s", ", ".join(findings), text[:80])
+        plan.details["blocked"].append({"text": text, "reason": ", ".join(findings)})
+        return None
+    return text
 
 
-def apply_importance_decay(memories: list[dict],
-                           deleted_ids: set) -> dict:
-    """Decay importance of old, unrecalled memories.
+def integrate(plan: Plan, fact: dict):
+    text = _safe(fact["text"], plan, ENTRY_MAX_CHARS)
+    if text is None or text in plan.entries:
+        return
+    vector = fact["vector"]
+    importance = fact.get("importance", 0.5)
 
-    Returns {"decayed": int, "soft_deleted": int, "soft_deleted_ids": [...]}.
-    """
-    now_ms = time.time() * 1000
-    decayed = 0
-    soft_deleted = 0
-    soft_deleted_ids = []
+    i, sim = best_match(vector, plan.vectors)
+    if i < 0 or sim < CONTRADICTION_SIMILARITY:
+        plan.add(text, vector, importance)
+        plan.details["added"].append(text)
+        return
 
-    for mem in memories:
-        if mem["id"] in deleted_ids:
-            continue
+    existing = plan.entries[i]
+    kind = classify_relationship(text, existing)["type"]
+    log.info("Relation (sim=%.3f, %s): '%s' vs '%s'", sim, kind, text[:50], existing[:50])
 
-        created_ms = mem.get("createdAt", now_ms)
-        age_days = (now_ms - created_ms) / (1000 * 60 * 60 * 24)
-
-        if age_days < 1:
-            continue
-
-        current = mem["importance"]
-        decay = IMPORTANCE_DECAY_RATE * (age_days ** 0.5)
-        new_importance = max(IMPORTANCE_FLOOR, current - decay)
-
-        if new_importance < current:
-            update_importance(mem["id"], new_importance)
-            decayed += 1
-
-            if new_importance <= SOFT_DELETE_THRESHOLD:
-                log.info(
-                    "Soft-deleting memory (importance=%.3f): %s",
-                    new_importance, mem["text"][:60],
-                )
-                delete_memory(mem["id"])
-                soft_deleted += 1
-                soft_deleted_ids.append(mem["id"])
-
-    log.info("Decay: %d updated, %d soft-deleted", decayed, soft_deleted)
-    return {
-        "decayed": decayed,
-        "soft_deleted": soft_deleted,
-        "soft_deleted_ids": soft_deleted_ids,
-    }
-
-
-def archive_episodes(processed_dates: list[str]) -> int:
-    """Move processed episode files to archive directory."""
-    if not processed_dates:
-        return 0
-
-    os.makedirs(ARCHIVE_DIR, exist_ok=True)
-    archived = 0
-
-    for date in processed_dates:
-        src = os.path.join(EPISODE_DIR, f"{date}.md")
-        dst = os.path.join(ARCHIVE_DIR, f"{date}.md")
-        if os.path.exists(src):
-            shutil.move(src, dst)
-            archived += 1
-            log.info("Archived %s", src)
-
-    log.info("Archived %d episode files", archived)
-    return archived
-
-
-def run_rem(nrem_result: dict) -> dict:
-    """Execute the REM phase."""
-    log.info("=== REM Phase: Starting memory integration ===")
-
-    # 1. Load all semantic memories
-    memories = load_all_memories()
-    log.info("Loaded %d semantic memories", len(memories))
-
-    # 2. Get new memory IDs from NREM
-    new_ids = set(nrem_result.get("created_ids", []))
-    log.info("New memories from NREM: %d", len(new_ids))
-
-    # 3. Find conflicts (O(N*M))
-    if len(memories) >= 2 and new_ids:
-        conflicts = find_conflicts(memories, new_ids)
+    if kind == "duplicate":
+        plan.meta.reinforce(plan.target, existing, plan.now)
+        plan.details["reinforced"] += 1
+    elif kind == "state_change":
+        merged = _safe(merge_state_change(text, existing, KEEP_PREV_STATE), plan,
+                       MERGED_MAX_CHARS)
+        if merged is None:
+            return
+        plan.replace(existing, [merged], [embed_texts([merged])[0]], importance)
+        plan.details["merged"].append({"before": [existing, text], "after": merged})
+    elif kind == "different_aspects":
+        texts = consolidate_aspects(text, existing)
+        texts = [t for t in (_safe(t, plan, ENTRY_MAX_CHARS) for t in texts or []) if t]
+        # Consolidation must actually save space, otherwise just add the fact.
+        if not texts or char_count(texts) >= len(text) + len(existing) + 3:
+            plan.add(text, vector, importance)
+            plan.details["added"].append(text)
+            return
+        plan.replace(existing, texts, embed_texts(texts), importance)
+        plan.details["consolidated"].append({"before": [existing, text], "after": texts})
     else:
-        conflicts = []
-        log.info("Skipping conflict detection (need new + existing memories)")
+        plan.add(text, vector, importance)
+        plan.details["added"].append(text)
 
-    # 4. Resolve conflicts (3-tier)
-    resolution = resolve_conflicts(conflicts)
-    all_deleted = set(resolution["deleted_ids"])
 
-    # 5. Apply importance decay
-    decay_result = apply_importance_decay(memories, all_deleted)
+def downscale(plan: Plan, budget: int):
+    """Synaptic homeostasis: bring the file back under its budget."""
+    # 0. Optional absolute forgetting of faded entries.
+    if FORGET_THRESHOLD > 0:
+        for e in list(plan.entries):
+            score = plan.meta.score(plan.target, e, plan.now)
+            if e not in plan.touched and score < FORGET_THRESHOLD:
+                plan.remove(e)
+                plan.details["forgotten"].append({"text": e, "score": round(score, 3),
+                                                  "reason": "faded"})
+    if char_count(plan.entries) <= budget:
+        return
 
-    # 6. Archive processed episodes
-    processed_dates = nrem_result.get("processed_dates", [])
-    archived = archive_episodes(processed_dates)
+    # 1. Compress: tighten the longest entries first.
+    for e in sorted(plan.entries, key=len, reverse=True)[:MAX_SHORTEN_PER_RUN]:
+        if char_count(plan.entries) <= budget or len(e) <= ENTRY_MAX_CHARS // 2:
+            break
+        shorter = shorten_entry(e)
+        if not shorter:
+            continue
+        shorter = clean_entry(shorter)
+        if threat_findings(shorter) or shorter in plan.entries:
+            continue
+        importance = plan.meta.get(plan.target, e, plan.now)["importance"]
+        plan.replace(e, [shorter], [embed_texts([shorter])[0]], importance)
+        plan.details["shortened"].append({"before": e, "after": shorter})
 
-    summary = {
-        "total_memories": len(memories),
-        "conflicts_found": len(conflicts),
-        "merged": len(resolution["merged"]),
-        "consolidated": len(resolution["consolidated"]),
-        "deleted": len(resolution["deleted_ids"]),
-        "split_created": len(resolution["created_ids"]),
-        "decayed": decay_result["decayed"],
-        "soft_deleted": decay_result["soft_deleted"],
-        "archived": archived,
-        "merge_details": resolution["merged"],
-        "consolidation_details": resolution["consolidated"],
-    }
-    log.info("REM complete: conflicts=%d, merged=%d, consolidated=%d, deleted=%d",
-             len(conflicts), len(resolution["merged"]),
-             len(resolution["consolidated"]), len(resolution["deleted_ids"]))
+    # 2. Forget: evict the weakest entries, sparing tonight's work if possible.
+    while char_count(plan.entries) > budget and plan.entries:
+        candidates = [e for e in plan.entries if e not in plan.touched] or plan.entries
+        weakest = min(candidates, key=lambda e: plan.meta.score(plan.target, e, plan.now))
+        score = plan.meta.score(plan.target, weakest, plan.now)
+        plan.remove(weakest)
+        plan.details["forgotten"].append({"text": weakest, "score": round(score, 3),
+                                          "reason": "over budget"})
+
+
+def _archive_forgotten(target: str, forgotten: list[dict], now: float):
+    if not forgotten:
+        return
+    os.makedirs(MEMORY_ARCHIVE_DIR, exist_ok=True)
+    with open(os.path.join(MEMORY_ARCHIVE_DIR, "forgotten.jsonl"), "a", encoding="utf-8") as f:
+        for item in forgotten:
+            f.write(json.dumps({"target": target, "at": now, **item},
+                               ensure_ascii=False) + "\n")
+
+
+def run_rem(nrem_result: dict, snapshot: dict[str, list[str]], limits: dict,
+            meta, now: float, dry_run: bool = False, stamp: str | None = None) -> dict:
+    log.info("=== REM Phase: integration + homeostasis ===")
+    summary = {"targets": {}}
+
+    for target, entries in snapshot.items():
+        limit = limits[target]["limit"]
+        budget = int(limit * FILL_RATIO)
+        plan = Plan(target, entries, entry_vectors(target, entries, meta), meta, now)
+
+        facts = sorted((f for f in nrem_result["facts"] if f["target"] == target),
+                       key=lambda f: f.get("importance", 0.5), reverse=True)
+        for fact in facts:
+            integrate(plan, fact)
+        downscale(plan, budget)
+
+        applied = apply_ops(target, plan.ops, limit, dry_run=dry_run, stamp=stamp)
+        if not dry_run:
+            _archive_forgotten(target, plan.details["forgotten"], now)
+
+        summary["targets"][target] = {
+            "limit": limit,
+            "budget": budget,
+            "before_chars": applied["before_chars"],
+            "after_chars": applied["after_chars"],
+            "entries_before": len(entries),
+            "entries_after": len(plan.entries),
+            "ops_applied": len(applied["applied"]),
+            "ops_skipped": applied["skipped"],
+            "backup": applied["backup"],
+            **plan.details,
+        }
+        log.info("%s: %d -> %d chars (budget %d / limit %d), %d ops applied, %d skipped",
+                 target, applied["before_chars"], applied["after_chars"], budget, limit,
+                 len(applied["applied"]), len(applied["skipped"]))
     return summary

@@ -1,295 +1,147 @@
-# Dreamer
+# Hermesume
 
-> https://github.com/JinHo-von-Choi/memento-mcp 프로젝트를 Openclaw에 적용하다가 실패하고 잠에 든 다음 날
-  장원영이랑 버스타고 출근하는 꿈을 꾸다가 깼는데, 갑자기 아이디어가 떠오름
+**Hermes + Yume(夢, 꿈)**: [Hermes Agent](https://github.com/NousResearch/hermes-agent)를 위한 수면 중 기억 정리기.
 
 > AI 에이전트는 잠을 자지 않는다. 꿈도 꾸지 않는다. → 이게 사실 AI 에이전트의 가장 큰 문제
 
-> 꿈을 꾼다는건, 자면서 기억들을 압축하고 정리하는 과정을 우연히 의식이 깨어나는 바람에 보게 되는 과정이라고 함
-  즉, 이러한 과정을 AI에게 적용한다면 
-   - AI의 기억방식을 무한히 늘리는 DB에 짱박는 방식이 아닌 수만년 진화한 생물의 뇌의 처리방식을 모방할 수 있지 않을까
-> 그러면서 메모리로 인해 토큰을 무한히 잡아먹는 문제에서도 벗어날 수 있으면서
-> 동시에 인간 기준에서 어느정도 허용할 수 있지만 인간스러우면서 완벽하진 않은 '기억력'을 만들어낼 수 있지 않을까?
+OpenClaw용으로 만들었던 [Dreamer (clawdreamer)](https://github.com/EESIZ/clawdreamer)를 Hermes로 옮긴 버전이다.
+아이디어는 그대로다. 꿈은 (가설상) 뇌가 하루치 기억을 압축하고 정리하는 과정이니, 에이전트도 매일 밤 같은 과정을 거치게 하자.
 
-요약 : 꿈이라는 과정은 = 인간 기억 DB 압축과정이라는 가설 → AI 봇에게도 유사한 기능을 추가해보자는 프로젝트
+[English](README.md)
 
-**Dreamer는 AI 에이전트에게 '꿈'을 선물한다.**
+## 왜 Hermes에 필요한가
 
-[OpenClaw](https://openclaw.ai)용으로 만들었지만, 마크다운 파일을 생성하는 어떤 시스템과도 연동 가능하다. - "아마도"
+Hermes의 기본 메모리는 의도적으로 작고 선별적이다.
+
+| 파일 | 내용 | 기본 한도 |
+|------|------|-----------|
+| `~/.hermes/memories/MEMORY.md` | 에이전트 자신의 노트 (환경, 컨벤션, 교훈) | 2,200자 |
+| `~/.hermes/memories/USER.md` | 사용자 프로필 (선호, 말투) | 1,375자 |
+
+두 파일 모두 매 세션 시작 시 시스템 프롬프트에 들어간다. 대화 전체는 `~/.hermes/state.db`(SQLite + FTS5)에 남고, 필요할 때 `session_search`로 꺼내 볼 수 있다.
+
+즉 Hermes에는 해마(`state.db`, 원본 에피소드)와 작은 신피질(`MEMORY.md`/`USER.md`, 항상 켜진 지식)이 이미 있다. 빠진 것은 **수면**이다. 하루 중 중요한 내용을 한쪽에서 다른 쪽으로 옮기고, 낡은 사실을 병합하고, 파일이 가득 찼을 때 무엇을 잊을지 정하는 과정이 따로 없다. 지금은 에이전트가 대화 도중에, 다른 일을 하면서 직접 써야 한다.
+
+Hermesume이 그 오프라인 과정을 맡는다.
 
 ## 작동 원리
 
-Claude의 도움을 받아 수면 신경과학 논문을 참고해
-모델로 삼았다. 매일 밤, 사람의 뇌가 하는 것과 같은 3단계를 거친다.
+```
+~/.hermes/state.db  (sessions + messages, 읽기 전용)
+        │
+        ▼
+   ┌─────────┐
+   │  NREM   │  끝난 세션 → 대화 교환 단위 → 임베딩 → 클러스터 → LLM이 오래 갈 사실만 추출
+   └────┬────┘  ("memory" 또는 "user"로 분류)
+        ▼
+   ┌─────────┐
+   │   REM   │  각 사실을 가장 가까운 기존 항목과 비교:
+   └────┬────┘    duplicate → 강화 · state_change → 병합(최신 우선, "(prev: …)")
+        │         different_aspects → 통합 · unrelated → 추가
+        │       항상성: 예산 초과 시 → 긴 항목 압축 → 가장 약한 항목 망각
+        ▼
+~/.hermes/memories/MEMORY.md, USER.md  (Hermes와 같은 락으로 원자적으로 기록)
+        │
+        ▼
+   Dream Log  (~/.hermesume/dream-log/YYYY-MM-DD_HHMM.md)
+```
 
-### Phase 1: NREM -- "오늘 무슨 일이 있었지?"
+### Phase 1: NREM: "오늘 무슨 일이 있었지?"
 
-NREM 수면 동안 해마는 하루의 사건들을 재생하고, 중요한 패턴만 골라 신피질로 전달한다. Dreamer도 같은 일을 한다:
+- 지난 실행 이후에 활동이 있었고, 마지막 활동이 30분 이상 지난 세션만 `state.db`에서 읽는다. 진행 중인 대화를 도중에 꿈꾸지 않기 위해서다. DB는 **읽기 전용**으로 연다.
+- 기본값으로는 `user`/`assistant` 발화만 쓴다. 도구 출력(웹 페이지, 파일)은 신뢰할 수 없고, 가져온 페이지에 들어 있던 프롬프트 인젝션이 영구 기억이 되면 안 되기 때문이다. `cron` 세션도 기본으로 제외한다.
+- 압축된 세션은 압축 요약이 아니라 원본 메시지를 사용한다.
+- 대화를 교환 단위(사용자 발화 + 응답)로 나누고 임베딩해 비슷한 것끼리 묶은 뒤, LLM에게 *오래 유효할* 사실만 뽑게 한다. 예산이 수천 자뿐이므로 "없음"도 정상 답변이다.
 
-- openclaw에서 생성하는 에피소드 파일 로드 (`YYYY-MM-DD.md` 및 `YYYY-MM-DD-slug.md`)
-- 텍스트를 의미 단위로 분할
-- 임베딩 유사도로 관련 청크를 클러스터링
-- LLM이 각 클러스터를 핵심 사실로 압축
-- 기존 기억과 중복 체크
-- 새 시맨틱 기억을 LanceDB에 저장
+### Phase 2: REM: "이건 내가 아는 것과 맞나?"
 
-날것의 경험이 들어가서, 압축된 지식이 나온다.
+- 새 사실은 기존 항목하고만 비교한다(O(N·M)). LLM이 가장 가까운 항목과의 관계를 `duplicate` / `state_change` / `different_aspects` / `unrelated`로 분류한다.
+  - 임베딩 유사도만으로 중복을 버리지 **않는다**. "Postgres 16"과 "Postgres 17"은 임베딩상 거의 같아서, 중복인지 상태 변경인지는 분류기만 구분할 수 있다. 원래 Dreamer에도 있던 문제를 여기서 고쳤다.
+- **시냅스 항상성**: Hermes 메모리는 크기가 정해져 있어 잊는 과정이 필요하다. 파일이 한도의 `FILL_RATIO`(기본 85%)를 넘으면 먼저 LLM으로 긴 항목을 줄이고, 그래도 넘으면 *감쇠된 중요도*가 가장 낮은 항목부터 내보낸다. 중요도는 같은 사실이 다시 나오면 올라가고, 그 뒤로 날짜만큼 선형으로 떨어진다. 에이전트가 직접 쓴 항목은 처음 발견될 때 중요도 0.7로 등록한다. 내보낸 항목은 `memory-archive/forgotten.jsonl`에 남는다. 남겨 둔 15%는 낮 동안 에이전트가 직접 `memory add`할 공간이다.
+- 모든 후보 항목은 기록 전에 프롬프트 인젝션·유출·비밀키 패턴 검사를 거친다. Hermes의 `tools.threat_patterns`를 import할 수 있으면 그것을 쓰고, 없으면 내장된 일부 패턴을 쓴다.
 
-### Phase 2: REM -- "이건 내가 아는 것과 맞아?"
+### Phase 3: Dream Log: "무슨 꿈을 꿨지?"
 
-REM 수면은 새 기억과 기존 기억을 통합하는 시간이다 -- 모순을 해결하고, 연결을 강화한다. Dreamer의 REM 단계:
+실행마다 마크다운 리포트가 남는다. 추출한 사실, 추가/병합/통합/압축/망각/차단된 항목, 실행 전후 크기가 들어 있다.
 
-- **새** 기억과 **기존** 기억 사이의 충돌 탐지 (예상 복잡도 : O(N*M)) ← 뭔가 중간에 모듈을 잘 넣으면 최적화 가능한데 이정도가 내 한계인듯 
-- 충돌 분류: `state_change` / `different_aspects` / `unrelated`
-- **상태 변경**: 하나의 기억으로 병합 ("모델을 Claude로 변경" + 이전: "모델은 Gemini였음")
-- **다른 측면**: 종합적인 기억으로 통합
-- 중요도 감쇠 적용 -- 호출되지 않는 기억은 서서히 희미해진다
-- 임계치 이하로 떨어진 기억은 소프트 삭제
-- 처리된 에피소드는 아카이브로 이동
+## 실행 중인 Hermes와의 안전성
 
-"저번 주에 설정 바꿨다고 했잖아요" 같은 일은 더 이상 없다.
-
-### Phase 3: Dream Log -- "오늘 밤 무슨 꿈을 꿨지?"
-
-매 사이클마다 마크다운 리포트가 생성된다: 뭘 만들었고, 뭘 병합했고, 뭘 잊었는지. 에이전트의 기억 관리에 대한 투명한 기록.
+- `state.db`는 `mode=ro`로 열며 절대 쓰지 않는다.
+- 메모리 파일은 Hermes와 같은 방식으로 쓴다. `MEMORY.md.lock`에 배타적 `flock`을 걸고, 임시 파일에 쓴 뒤 `os.replace`한다. 출력은 `§` 포맷으로 정확히 왕복되므로 Hermes의 drift guard를 통과한다. Hermes의 `MemoryStore`로 결과물을 직접 읽어서 확인했다.
+- 계획은 스냅샷 기준으로 세우지만 적용은 *현재* 파일에 한다. 그 사이 에이전트가 바꾼 항목에 대한 작업은 건너뛴다. 하드 한도를 넘게 되면 우리가 추가한 것부터 되돌린다.
+- 매번 쓰기 전에 `~/.hermesume/memory-archive/<timestamp>/`에 원본을 백업한다.
+- Hermes는 세션 시작 시점의 메모리를 고정해서 쓰므로, 변경 사항은 **다음 세션**부터 반영된다.
 
 ## 빠른 시작
 
 ```bash
-# 1. 의존성 설치
-pip install -r requirements.txt
-
-# 2. 환경 설정
-cp .env.example .env
-# .env에 OpenAI API 키 입력
-
-# 3. 데이터 디렉토리 + LanceDB 테이블 초기화
-python setup.py --example
-
-# 4. 실행
-python dreamer.py --verbose
+pip install -r requirements.txt      # pyyaml(선택)뿐, 핵심 코드는 표준 라이브러리
+cp .env.example .env                 # OPENAI_API_KEY 설정 또는 ollama 사용
+python doctor.py                     # state.db, 메모리 파일, 한도, 키 점검
+python hermesume.py --dry-run -v     # 계획만 세우고 dream log만 기록
+python hermesume.py -v               # 실제 실행
 ```
 
-setup 스크립트가 디렉토리 구조 생성, LanceDB `memories` 테이블 초기화(1536차원 벡터), 예제 에피소드 파일 생성까지 해준다.
+cron이나 `examples/`의 systemd 유닛으로 매일 밤 실행한다.
 
-## OpenClaw 연동
-
-Dreamer는 [OpenClaw](https://openclaw.ai)의 메모리 시스템과 함께 동작하도록 설계되었다.
-
-### 전제 조건
-
-1. **OpenClaw Gateway** -- `memory-lancedb` 플러그인 활성화 필요
-2. **LanceDB** -- 시맨틱 기억 벡터 저장소
-3. **에피소드 파일** -- OpenClaw의 `session-memory` 훅이 자동 생성
-
-### OpenClaw 설정
-
-`openclaw.json`에서 메모리 플러그인을 활성화한다:
-
-```json
-{
-  "plugins": {
-    "slots": {
-      "memory": "memory-lancedb"
-    },
-    "entries": {
-      "memory-lancedb": {
-        "enabled": true,
-        "config": {
-          "embedding": {
-            "apiKey": "${OPENAI_API_KEY}",
-            "model": "text-embedding-3-small"
-          },
-          "autoCapture": true,
-          "autoRecall": true
-        }
-      }
-    }
-  },
-  "hooks": {
-    "internal": {
-      "enabled": true,
-      "entries": {
-        "session-memory": {
-          "enabled": true
-        }
-      }
-    }
-  }
-}
+```bash
+0 3 * * * /path/to/hermesume/examples/run-hermesume.sh
 ```
 
-각 설정의 역할:
-- **memory-lancedb**: 시맨틱 기억을 1536차원 벡터로 LanceDB에 저장. 게이트웨이와 Dreamer가 같은 DB를 공유한다.
-- **session-memory**: `/new` 명령 시 대화 요약을 에피소드 파일(`YYYY-MM-DD-slug.md`)로 저장하는 내부 훅. `memoryFlush`는 컨텍스트 윈도우 압축 시 `YYYY-MM-DD.md`로 기록.
+OpenClaw 버전과 달리 `session-flush` 단계가 필요 없다. Hermes는 메시지를 받는 즉시 `state.db`에 저장한다.
 
-### 데이터 흐름
+### Hermes 프로필
 
+`HERMES_HOME`을 프로필 디렉터리로 지정하고, 프로필마다 `HERMESUME_HOME`을 따로 둔다.
+
+```bash
+HERMES_HOME=~/.hermes/profiles/work HERMESUME_HOME=~/.hermesume-work python hermesume.py
 ```
-사용자 <-> OpenClaw Gateway
-              |
-              |-- autoCapture --> LanceDB (시맨틱 기억)
-              |                      ^
-              |-- session-memory --> episodes/YYYY-MM-DD-slug.md  (/new 시)
-              |-- memoryFlush ----> episodes/YYYY-MM-DD.md        (압축 시)
-              |                      |
-              |              02:00  session-flush (/new 자동 전송)
-              |                      |
-              |              03:00  Dreamer (NREM → REM → Dream Log)
-              |                      |
-              +-- autoRecall <---- LanceDB (정리 완료)
-```
-
-1. **대화 중**: 게이트웨이가 중요한 사실을 LanceDB에 자동 저장하고, 관련 기억을 자동 회상
-2. **에피소드 생성**: `/new` 명령 시 session-memory 훅이 에피소드 파일 생성. 컨텍스트 압축 시 memoryFlush가 에피소드 파일 생성.
-3. **매일 새벽 2시**: `session-flush`가 `/new`를 자동 전송하여 그날 대화를 에피소드로 저장
-4. **매일 새벽 3시**: Dreamer가 에피소드를 읽고, 새 시맨틱 기억을 만들고, 기존 기억과 충돌을 해결하고, 오래된 기억을 정리
-5. **다음 대화**: 게이트웨이가 정리된 기억을 LanceDB에서 회상
-
-### 단독 사용 (OpenClaw 없이)
-
-Dreamer는 마크다운 에피소드 파일을 생성하는 어떤 시스템과도 연동된다. episodes 디렉토리에 일별 파일을 작성하면 된다:
-
-```
-$DREAMER_HOME/episodes/2024-03-15.md
-$DREAMER_HOME/episodes/2024-03-16.md
-```
-
-`python setup.py`로 LanceDB 테이블을 초기화한 후 실행.
 
 ## 설정
 
-모든 설정은 `config.py`에 있으며, 환경변수로 오버라이드 가능:
+한도와 활성화 여부는 `$HERMES_HOME/config.yaml`에서 읽는다(`memory.memory_char_limit`, `memory.user_char_limit`, `memory.memory_enabled`, `memory.user_profile_enabled`).
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `DREAMER_HOME` | `~/.dreamer` | 데이터 루트 디렉토리 |
-| `DREAMER_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama`, `sentence-transformers` |
-| `DREAMER_EMBEDDING_DIM` | `1536` | 임베딩 모델에 맞게 설정 |
-| `OPENAI_API_KEY` | (openai 사용 시 필수) | OpenAI 임베딩용 |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 서버 URL |
-| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Ollama 임베딩 모델 |
-| `ST_MODEL_NAME` | `all-MiniLM-L6-v2` | Sentence-transformers 모델 |
-| `DREAMER_LLM_PROVIDER` | `openai` | `openai`, `ollama`, `minimax` |
-| `OLLAMA_LLM_MODEL` | `qwen2.5:3b` | Ollama LLM 모델 (요약/분류용) |
-| `MINIMAX_API_KEY` | (선택) | MiniMax LLM 사용 시 |
+| `HERMES_HOME` | `~/.hermes` | Hermes 홈(또는 프로필 디렉터리) |
+| `HERMESUME_HOME` | `~/.hermesume` | 커서, 메타데이터, 로그, 아카이브 |
+| `HERMESUME_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama`, `sentence-transformers` |
+| `HERMESUME_LLM_PROVIDER` | `openai` | `openai`(OpenAI 호환 URL 모두), `ollama`, `minimax` |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | 예: OpenRouter |
+| `HERMESUME_OPENAI_LLM_MODEL` | `gpt-4.1-nano` | |
+| `HERMESUME_FILL_RATIO` | `0.85` | Hermes 한도 대비 채울 비율 |
+| `HERMESUME_DECAY_RATE` | `0.01` | 강화 없이 하루 지날 때마다 줄어드는 중요도 |
+| `HERMESUME_FORGET_THRESHOLD` | `0` | 0보다 크면 예산이 남아도 희미해진 항목을 잊음 |
+| `HERMESUME_KEEP_PREV_STATE` | `true` | 상태 변경 병합 시 짧은 "(prev: …)" 유지 |
+| `HERMESUME_EXCLUDE_SOURCES` | `cron` | 제외할 세션 source (쉼표 구분) |
+| `HERMESUME_INCLUDE_TOOL_MESSAGES` | `false` | 도구 출력도 사용 (위험 증가) |
+| `HERMESUME_SESSION_SETTLE_SECONDS` | `1800` | 이보다 최근에 활동한 세션은 건너뜀 |
+| `HERMESUME_MAX_NEW_FACTS` | `12` | 실행당 최대 신규 사실 수 |
+| `HERMESUME_ENTRY_MAX_CHARS` | `220` | 항목 하나의 최대 길이 |
+| `HERMESUME_ALERT_PROVIDER` | (꺼짐) | `telegram`, `slack`, `webhook`. 에러는 에이전트가 아닌 운영자에게만 보낸다 |
 
-### 에러 알림
+선택 사항: `$HERMESUME_HOME/episodes/`에 `YYYY-MM-DD*.md` 형식의 마크다운 노트를 넣으면 함께 처리한 뒤 아카이브한다.
 
-Dreamer는 AI 에이전트가 모르게 백그라운드에서 돌아가는 프로세스다. 장애 발생 시 에이전트가 아닌 **운영자**에게 직접 알림을 보낸다.
+## 한계
 
-| 변수 | 기본값 | 설명 |
-|------|--------|------|
-| `DREAMER_ALERT_PROVIDER` | (비활성) | `telegram`, `slack`, `webhook` |
-| `DREAMER_ALERT_TELEGRAM_BOT_TOKEN` | | 텔레그램 봇 토큰 |
-| `DREAMER_ALERT_TELEGRAM_CHAT_ID` | | 알림 받을 텔레그램 채팅 ID |
-| `DREAMER_ALERT_SLACK_WEBHOOK_URL` | | Slack incoming webhook URL |
-| `DREAMER_ALERT_WEBHOOK_URL` | | 일반 webhook (POST JSON) |
+- 위협 검사는 패턴 기반이다. 무해해 보이는 문장으로 바꿔 쓴 악성 지시는 통과할 수 있다. 주된 방어선은 도구 출력을 제외하는 것이다.
+- 품질은 LLM에 달려 있다. 작은 로컬 모델은 사소한 내용을 뽑거나 관계를 잘못 분류할 수 있다. 처음 며칠은 `--dry-run`으로 돌리면서 dream log를 직접 확인하는 것을 권한다.
+- 중요도는 재언급과 시간에 기반한 휴리스틱이다. Hermes가 기록하지 않으므로, 에이전트가 어떤 항목을 실제로 *사용했는지*는 알 수 없다.
+- 외부 Hermes 메모리 프로바이더(Honcho, Mem0 등)는 건드리지 않는다. 내장 파일만 다룬다.
 
-설정 예시 (Telegram):
-```bash
-export DREAMER_ALERT_PROVIDER=telegram
-export DREAMER_ALERT_TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-export DREAMER_ALERT_TELEGRAM_CHAT_ID=your_chat_id
-```
-
-에러 발생 시 이런 메시지를 받는다:
-> :skull: **Dreamer Error**
-> HTTPError: HTTP Error 429: Too Many Requests
-
-### 튜닝 파라미터
-
-| 파라미터 | 기본값 | 설명 |
-|----------|--------|------|
-| `CLUSTER_SIMILARITY` | 0.75 | 청크 클러스터링 임계치 |
-| `DEDUP_SIMILARITY` | 0.90 | 이 이상 유사하면 중복으로 스킵 |
-| `CONTRADICTION_SIMILARITY` | 0.70 | 충돌 탐지 임계치 |
-| `IMPORTANCE_DECAY_RATE` | 0.05 | 일일 중요도 감쇠율 |
-| `SOFT_DELETE_THRESHOLD` | 0.15 | 이 이하면 삭제 |
-| `MAX_EPISODES_PER_RUN` | 7 | 사이클당 최대 처리 일수 |
-| `MAX_NEW_MEMORIES` | 20 | 사이클당 최대 신규 기억 수 |
-
-### 디렉토리 구조
-
-```
-$DREAMER_HOME/
-  episodes/           # 입력: 일별 마크다운 파일 (YYYY-MM-DD.md, YYYY-MM-DD-slug.md)
-  episodes/archive/   # 처리 완료된 에피소드
-  lancedb/            # LanceDB 벡터 DB (게이트웨이와 공유)
-  dream-log/          # 출력: 매일 밤 정리 리포트
-  memory-archive/     # 백업: 병합 전 기억 스냅샷
-  workspace/          # 선택: 참조 문서 (컨텍스트 연결용)
-    docs/             # 자동 생성되는 참조 문서
-    skills/           # 스킬 정의 (SKILL.md)
-```
-
-## session-flush (자동 에피소드 생성)
-
-대화가 짧아서 `memoryFlush`가 발동되지 않는 날에도 에피소드가 누락되지 않도록, 매일 새벽 2시에 `/new` 명령을 자동 전송하는 스크립트다. Dreamer(새벽 3시) 실행 전에 그날의 대화를 에피소드 파일로 확보한다.
+## 테스트
 
 ```bash
-# systemd timer 등록 (examples/ 참고)
-sudo systemctl enable --now session-flush.timer
+python -m unittest discover tests
 ```
 
-## 에피소드 파일 형식
+네트워크 없이 가상의 Hermes 홈에서 전체 사이클을 돌린다. 상태 변경 병합, user/agent 분류, 인젝션 차단, 예산 초과 시 망각, 포맷 왕복, 동시 수정 처리를 확인한다.
 
-에피소드는 `YYYY-MM-DD.md` 또는 `YYYY-MM-DD-slug.md` 형식의 마크다운 파일이다. AI 에이전트의 하루 경험을 자유롭게 기록한다:
+## Donations
+If you find it useful...
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/V7V21XAPRC)
 
-```markdown
-# 세션 노트 - 2024-03-15
-
-## 배포 관련 논의
-Docker Compose + nginx 리버스 프록시 구조로 결정.
-DB는 PostgreSQL 16, pgvector 확장 사용.
-
-## API 연동
-결제 API 연결 완료. POST /v1/charges
-속도 제한: 100 req/min. Bearer 토큰 인증.
-```
-
-## 크론잡 실행
-
-```bash
-# 예시: 매일 새벽 3시 실행
-0 3 * * * cd /path/to/dreamer && python3 dreamer.py --verbose >> dream-log/cron.log 2>&1
-```
-
-또는 `examples/` 디렉토리의 systemd timer를 사용.
-
-## 아키텍처
-
-```
-에피소드 파일 (YYYY-MM-DD.md / YYYY-MM-DD-slug.md)
-        |
-        v
-   +---------+
-   |  NREM   |  분할 -> 임베딩 -> 클러스터링 -> 요약 -> 저장
-   +----+----+
-        | created_ids
-        v
-   +---------+
-   |   REM   |  충돌 탐지 -> 병합/통합 -> 감쇠 -> 정리
-   +----+----+
-        |
-        v
-   +---------+
-   |Dream Log|  리포트 생성
-   +---------+
-```
-
-## 요구 사항
-
-- Python 3.10+
-- 임베딩 제공자 (택 1):
-  - OpenAI API 키 (`text-embedding-3-small`)
-  - [Ollama](https://ollama.com) 로컬 실행 (`nomic-embed-text`)
-  - `pip install sentence-transformers` (`all-MiniLM-L6-v2`)
-- LLM 제공자 (택 1):
-  - OpenAI API 키 (`gpt-4.1-nano`)
-  - [Ollama](https://ollama.com) 로컬 실행 (`qwen2.5:3b` 등)
-  - MiniMax API 키
-
-## 라이선스
+## License
 
 MIT

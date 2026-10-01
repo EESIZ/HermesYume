@@ -16,7 +16,7 @@ from config import (
     ST_MODEL_NAME,
 )
 
-log = logging.getLogger("dreamer.embedder")
+log = logging.getLogger("hermesume.embedder")
 
 # Lazy-loaded sentence-transformers model
 _st_model = None
@@ -85,7 +85,7 @@ def _embed_sentence_transformers(texts: list[str]) -> list[list[float]]:
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Generate embeddings for a list of texts.
 
-    Provider is determined by DREAMER_EMBEDDING_PROVIDER env var.
+    Provider is determined by HERMESUME_EMBEDDING_PROVIDER env var.
     """
     if not texts:
         return []
