@@ -105,6 +105,17 @@ REM 수면은 새 기억과 기존 기억을 통합하는 시간이다 -- 모순
 
 ## 빠른 시작
 
+### 한 방에 설치 (Hermes가 돌아가는 머신에서)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EESIZ/HermesYume/main/install.sh | bash -s -- --cron
+```
+
+`~/HermesYume`에 받고, venv 만들고, `~/.hermesyume/.env` 만들고(이미 있으면 안 건드림), `doctor.py`로 점검하고, 매일 새벽 3시 크론까지 등록한다. 기존 crontab은 `~/.hermesyume/crontab.bak`에 백업. 다시 돌리면 업데이트만 된다.
+설치 끝나면 `~/.hermesyume/.env`에 API 키 넣고 `--dry-run` 한 번 돌려보면 끝.
+
+### 수동 설치
+
 ```bash
 # 1. 의존성 설치 (pyyaml 하나뿐이고 이것도 선택. 핵심 코드는 표준 라이브러리)
 pip install -r requirements.txt

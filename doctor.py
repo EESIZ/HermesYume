@@ -80,8 +80,9 @@ def main() -> int:
 
     # providers
     print(f"\nEmbedding provider: {EMBEDDING_PROVIDER} / LLM provider: {LLM_PROVIDER}")
-    if "openai" in (EMBEDDING_PROVIDER, LLM_PROVIDER) and not OPENAI_API_KEY:
-        print("[!] OPENAI_API_KEY is not set")
+    if "openai" in (EMBEDDING_PROVIDER, LLM_PROVIDER) and (
+            not OPENAI_API_KEY or OPENAI_API_KEY.startswith("your_")):
+        print("[!] OPENAI_API_KEY is not set (still the .env.example placeholder?)")
         problems += 1
 
     print("\nAll good. Try: python hermesyume.py --dry-run" if not problems

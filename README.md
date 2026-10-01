@@ -74,6 +74,16 @@ A markdown report per run: facts extracted, entries added / merged / consolidate
 
 ## Quick start
 
+### One-line install (on the machine running Hermes)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EESIZ/HermesYume/main/install.sh | bash -s -- --cron
+```
+
+Clones into `~/HermesYume`, creates a venv and `~/.hermesyume/.env` (never overwritten), runs `doctor.py`, and registers a nightly 03:00 cron job. The previous crontab is saved to `~/.hermesyume/crontab.bak`. Re-running just updates. Then put your API key in `~/.hermesyume/.env` and try `--dry-run`.
+
+### Manual
+
 ```bash
 pip install -r requirements.txt      # only pyyaml (optional); core is stdlib
 cp .env.example .env                 # set OPENAI_API_KEY or use ollama
