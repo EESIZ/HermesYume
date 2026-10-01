@@ -47,7 +47,12 @@ if [ ! -f "$ENV_FILE" ]; then
     cp "$INSTALL_DIR/.env.example" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
     echo
-    echo ">> Created $ENV_FILE -- put your API key in it (OPENAI_API_KEY, or switch to ollama)."
+    echo ">> Created $ENV_FILE"
+    if grep -qE '^(export )?(DEEPSEEK|OPENAI)_API_KEY=.+' "$HERMES_HOME/.env" 2>/dev/null; then
+        echo "   API key will be taken from $HERMES_HOME/.env -- nothing to fill in."
+    else
+        echo "   Put an API key in it (DEEPSEEK_API_KEY or OPENAI_API_KEY)."
+    fi
 fi
 
 # 4. doctor

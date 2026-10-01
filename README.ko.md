@@ -112,7 +112,7 @@ curl -fsSL https://raw.githubusercontent.com/EESIZ/HermesYume/main/install.sh | 
 ```
 
 `~/HermesYume`에 받고, venv 만들고, `~/.hermesyume/.env` 만들고(이미 있으면 안 건드림), `doctor.py`로 점검하고, 매일 새벽 3시 크론까지 등록한다. 기존 crontab은 `~/.hermesyume/crontab.bak`에 백업. 다시 돌리면 업데이트만 된다.
-설치 끝나면 `~/.hermesyume/.env`에 API 키 넣고 `--dry-run` 한 번 돌려보면 끝.
+API 키는 따로 안 넣어도 된다. Hermes가 이미 쓰고 있는 `~/.hermes/.env`의 `DEEPSEEK_API_KEY`(없으면 `OPENAI_API_KEY`)를 그대로 갖다 쓴다. 설치 끝나면 `--dry-run` 한 번 돌려보면 끝.
 
 ### 수동 설치
 
@@ -122,7 +122,7 @@ pip install -r requirements.txt
 
 # 2. 환경 설정
 cp .env.example .env
-# .env에 OpenAI API 키 입력 (또는 ollama 사용)
+# ~/.hermes/.env에 DEEPSEEK_API_KEY나 OPENAI_API_KEY가 있으면 아무것도 안 넣어도 됨
 
 # 3. 점검 (state.db, 메모리 파일, 한도, 키)
 python doctor.py
@@ -165,8 +165,9 @@ HERMES_HOME=~/.hermes/profiles/work HERMESYUME_HOME=~/.hermesyume-work python he
 |------|--------|------|
 | `HERMES_HOME` | `~/.hermes` | Hermes 홈 (또는 프로필 디렉토리) |
 | `HERMESYUME_HOME` | `~/.hermesyume` | 커서, 메타데이터, 로그, 아카이브 |
-| `HERMESYUME_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama`, `sentence-transformers` |
-| `HERMESYUME_LLM_PROVIDER` | `openai` | `openai` (OpenAI 호환 URL 전부), `ollama`, `minimax` |
+| `HERMESYUME_EMBEDDING_PROVIDER` | `auto` | `openai`, `ollama`, `sentence-transformers`, `hash`. auto = OpenAI 키 있으면 openai → sentence-transformers 깔려 있으면 그거 → 아니면 `hash` |
+| `HERMESYUME_LLM_PROVIDER` | `auto` | `deepseek`, `openai` (OpenAI 호환 URL 전부), `ollama`, `minimax`. auto = DeepSeek 키 있으면 deepseek, 아니면 openai |
+| `HERMESYUME_DEEPSEEK_MODEL` | `deepseek-v4-flash` | thinking은 꺼서 호출 |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | 예: OpenRouter |
 | `HERMESYUME_OPENAI_LLM_MODEL` | `gpt-4.1-nano` | |
 | `HERMESYUME_FILL_RATIO` | `0.85` | Hermes 한도 대비 채울 비율 |
@@ -209,6 +210,7 @@ $HERMESYUME_HOME/
 - 인젝션 검사는 패턴 기반이다. 멀쩡해 보이는 문장으로 바꿔 쓴 악성 지시는 통과할 수 있다. 진짜 방어선은 도구 출력을 아예 안 쓰는 것
 - 품질은 LLM 따라간다. 작은 로컬 모델은 쓸데없는 걸 뽑거나 관계를 잘못 분류할 수 있다
 - 중요도는 "다시 언급됐나 + 시간"으로만 매기는 휴리스틱이다. Hermes가 기록을 안 남겨서, 에이전트가 어떤 기억을 실제로 *써먹었는지*는 알 수 없다
+- DeepSeek엔 임베딩 API가 없어서, OpenAI 키 없이 돌리면 임베딩은 `hash`로 간다. 단어가 겹치는지만 보는 거라("Postgres 16" vs "17"은 잡지만 단어가 하나도 안 겹치는 같은 뜻은 못 잡음) 그만큼 LLM 분류기한테 더 많이 물어본다. 임계값도 따로 잡아놨다 (관련 0.28~0.94, 무관 0.18 이하로 실측)
 - 외부 메모리 프로바이더(Honcho, Mem0 등)는 안 건드린다. 내장 파일만 다룬다
 
 ## 테스트
@@ -223,10 +225,12 @@ python -m unittest discover tests
 
 - Python 3.10+
 - 임베딩 제공자 (택 1):
+  - 없어도 됨: `hash` (표준 라이브러리 문자 n-gram 해싱. API도 다운로드도 없음)
   - OpenAI API 키 (`text-embedding-3-small`)
   - [Ollama](https://ollama.com) 로컬 실행 (`nomic-embed-text`)
   - `pip install sentence-transformers` (`all-MiniLM-L6-v2`)
 - LLM 제공자 (택 1):
+  - DeepSeek API 키 (`deepseek-v4-flash`)
   - OpenAI API 키 또는 OpenAI 호환 엔드포인트 (`gpt-4.1-nano`)
   - [Ollama](https://ollama.com) 로컬 실행 (`qwen2.5:3b` 등)
   - MiniMax API 키

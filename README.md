@@ -80,13 +80,13 @@ A markdown report per run: facts extracted, entries added / merged / consolidate
 curl -fsSL https://raw.githubusercontent.com/EESIZ/HermesYume/main/install.sh | bash -s -- --cron
 ```
 
-Clones into `~/HermesYume`, creates a venv and `~/.hermesyume/.env` (never overwritten), runs `doctor.py`, and registers a nightly 03:00 cron job. The previous crontab is saved to `~/.hermesyume/crontab.bak`. Re-running just updates. Then put your API key in `~/.hermesyume/.env` and try `--dry-run`.
+Clones into `~/HermesYume`, creates a venv and `~/.hermesyume/.env` (never overwritten), runs `doctor.py`, and registers a nightly 03:00 cron job. The previous crontab is saved to `~/.hermesyume/crontab.bak`. Re-running just updates. No key to enter if Hermes already has `DEEPSEEK_API_KEY` (or `OPENAI_API_KEY`) in `~/.hermes/.env` -- HermesYume reuses it. Then try `--dry-run`.
 
 ### Manual
 
 ```bash
 pip install -r requirements.txt      # only pyyaml (optional); core is stdlib
-cp .env.example .env                 # set OPENAI_API_KEY or use ollama
+cp .env.example .env                 # optional if ~/.hermes/.env has DEEPSEEK_API_KEY / OPENAI_API_KEY
 python doctor.py                     # checks state.db, memory files, limits, keys
 python hermesyume.py --dry-run -v     # plan only, writes just a dream log
 python hermesyume.py -v               # real run
@@ -116,8 +116,9 @@ Limits and enabled flags are read from `$HERMES_HOME/config.yaml` (`memory.memor
 |----------|---------|-------------|
 | `HERMES_HOME` | `~/.hermes` | Hermes home (or profile dir) |
 | `HERMESYUME_HOME` | `~/.hermesyume` | cursor, metadata, dream logs, archives |
-| `HERMESYUME_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama`, `sentence-transformers` |
-| `HERMESYUME_LLM_PROVIDER` | `openai` | `openai` (any OpenAI-compatible URL), `ollama`, `minimax` |
+| `HERMESYUME_EMBEDDING_PROVIDER` | `auto` | `openai`, `ollama`, `sentence-transformers`, `hash`. auto = openai if OpenAI key, else sentence-transformers if installed, else `hash` |
+| `HERMESYUME_LLM_PROVIDER` | `auto` | `deepseek`, `openai` (any OpenAI-compatible URL), `ollama`, `minimax`. auto = deepseek if DeepSeek key, else openai |
+| `HERMESYUME_DEEPSEEK_MODEL` | `deepseek-v4-flash` | called with thinking disabled |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | e.g. OpenRouter |
 | `HERMESYUME_OPENAI_LLM_MODEL` | `gpt-4.1-nano` | |
 | `HERMESYUME_FILL_RATIO` | `0.85` | fill memory up to this fraction of Hermes' limit |
@@ -151,6 +152,7 @@ $HERMESYUME_HOME/
 - The threat scan is pattern-based. A malicious instruction paraphrased into harmless-looking wording can get past it; skipping tool output is the main defense.
 - Quality depends on the LLM. Small local models may extract trivia or misclassify relationships. Read the dream logs for the first few nights, ideally with `--dry-run`.
 - Importance is a heuristic (re-mentions + time). HermesYume cannot see when the agent *used* an entry, because Hermes doesn't record that.
+- DeepSeek has no embedding API, so without an OpenAI key embeddings fall back to `hash` (stdlib character n-gram hashing). It is lexical: it catches "Postgres 16" vs "17" but not paraphrases with no shared words, so REM leans more on the LLM classifier. It has its own thresholds (measured: related 0.28-0.94, unrelated <= 0.18).
 - External Hermes memory providers (Honcho, Mem0, …) are not touched; only the built-in files are.
 
 ## Tests

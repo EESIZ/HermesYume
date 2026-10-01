@@ -5,6 +5,9 @@ import logging
 import urllib.request
 
 from config import (
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL,
+    DEEPSEEK_MODEL,
     ENTRY_MAX_CHARS,
     LLM_PROVIDER,
     MINIMAX_API_KEY,
@@ -20,25 +23,39 @@ from config import (
 log = logging.getLogger("hermesyume.llm")
 
 
-def _call_openai(messages: list[dict], max_tokens: int = 1024) -> str:
-    """OpenAI-compatible chat completions (OpenAI, OpenRouter, vLLM, ...)."""
-    body = json.dumps({
-        "model": OPENAI_LLM_MODEL,
+def _chat_completions(base_url: str, api_key: str, model: str, messages: list[dict],
+                      max_tokens: int, extra: dict | None = None) -> str:
+    """OpenAI-compatible chat completions (OpenAI, DeepSeek, OpenRouter, vLLM, ...)."""
+    payload = {
+        "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.3,
-    }).encode()
+        **(extra or {}),
+    }
     req = urllib.request.Request(
-        f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions",
-        data=body,
+        f"{base_url.rstrip('/')}/chat/completions",
+        data=json.dumps(payload).encode(),
         headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=120) as resp:
         data = json.loads(resp.read())
-    return data["choices"][0]["message"]["content"]
+    return data["choices"][0]["message"]["content"] or ""
+
+
+def _call_openai(messages: list[dict], max_tokens: int = 1024) -> str:
+    return _chat_completions(OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_LLM_MODEL,
+                             messages, max_tokens)
+
+
+def _call_deepseek(messages: list[dict], max_tokens: int = 1024) -> str:
+    # DeepSeek V4 turns thinking ON when the toggle is omitted; these are short
+    # extraction/classification calls, so ask for the plain answer.
+    return _chat_completions(DEEPSEEK_BASE_URL, DEEPSEEK_API_KEY, DEEPSEEK_MODEL,
+                             messages, max_tokens, {"thinking": {"type": "disabled"}})
 
 
 def _call_minimax(messages: list[dict], max_tokens: int = 1024) -> str:
@@ -94,6 +111,8 @@ def llm_call(prompt: str, system: str = "", max_tokens: int = 1024) -> str:
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
+    if LLM_PROVIDER == "deepseek":
+        return _call_deepseek(messages, max_tokens)
     if LLM_PROVIDER == "minimax":
         return _call_minimax(messages, max_tokens)
     if LLM_PROVIDER == "ollama":

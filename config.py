@@ -54,22 +54,84 @@ DEFAULT_MEMORY_CHAR_LIMIT = 2200
 DEFAULT_USER_CHAR_LIMIT = 1375
 
 # ── API Keys ──
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+# Keys come from the environment, falling back to Hermes' own $HERMES_HOME/.env,
+# so a Hermes install that already has e.g. DEEPSEEK_API_KEY needs no extra setup.
+# Only these names are read from that file; nothing else in it is touched.
+_HERMES_ENV_KEYS = ("OPENAI_API_KEY", "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "MINIMAX_API_KEY")
+
+
+def _read_hermes_env(path: str) -> dict:
+    found = {}
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("export "):
+                    line = line[7:].lstrip()
+                key, sep, value = line.partition("=")
+                key = key.strip()
+                if sep and key in _HERMES_ENV_KEYS:
+                    value = value.strip()
+                    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                        value = value[1:-1]
+                    else:
+                        value = value.split(" #", 1)[0].strip()
+                    found[key] = value
+    except OSError:
+        pass
+    return found
+
+
+def _usable(key: str) -> bool:
+    """False for empty values and .env.example placeholders."""
+    return bool(key) and not key.startswith("your_")
+
+
+_hermes_env = _read_hermes_env(os.path.join(HERMES_HOME, ".env"))
+KEY_SOURCE = {}
+for _k in _HERMES_ENV_KEYS:
+    if _usable(os.environ.get(_k, "")):
+        KEY_SOURCE[_k] = "environment"
+    elif _usable(_hermes_env.get(_k, "")):
+        os.environ[_k] = _hermes_env[_k]
+        KEY_SOURCE[_k] = "$HERMES_HOME/.env"
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "") if _usable(os.environ.get("OPENAI_API_KEY", "")) else ""
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "") if _usable(os.environ.get("DEEPSEEK_API_KEY", "")) else ""
 MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 
-# Embedding provider: "openai", "ollama", or "sentence-transformers"
-EMBEDDING_PROVIDER = os.environ.get("HERMESYUME_EMBEDDING_PROVIDER", "openai")
+
+def _st_installed() -> bool:
+    import importlib.util
+    return importlib.util.find_spec("sentence_transformers") is not None
+
+
+# LLM (extraction / classification / merging)
+#   auto (default): deepseek if DEEPSEEK_API_KEY is available, else openai
+LLM_PROVIDER = os.environ.get("HERMESYUME_LLM_PROVIDER", "auto")
+if LLM_PROVIDER == "auto":
+    LLM_PROVIDER = "deepseek" if DEEPSEEK_API_KEY else "openai"
+OPENAI_LLM_MODEL = os.environ.get("HERMESYUME_OPENAI_LLM_MODEL", "gpt-4.1-nano")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "") or "https://api.deepseek.com"
+# deepseek-chat / deepseek-reasoner were retired on 2026-07-24.
+DEEPSEEK_MODEL = os.environ.get("HERMESYUME_DEEPSEEK_MODEL", "deepseek-v4-flash")
+OLLAMA_LLM_MODEL = os.environ.get("OLLAMA_LLM_MODEL", "qwen2.5:3b")
+MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
+
+# Embeddings: "openai", "ollama", "sentence-transformers", or "hash"
+#   auto (default): openai if OPENAI_API_KEY, else sentence-transformers if
+#   installed, else "hash" (stdlib char n-gram hashing -- no API, no download;
+#   cruder, so REM leans more on the LLM classifier). DeepSeek has no
+#   embedding API.
+EMBEDDING_PROVIDER = os.environ.get("HERMESYUME_EMBEDDING_PROVIDER", "auto")
+if EMBEDDING_PROVIDER == "auto":
+    EMBEDDING_PROVIDER = ("openai" if OPENAI_API_KEY
+                          else "sentence-transformers" if _st_installed() else "hash")
 EMBEDDING_MODEL = os.environ.get("HERMESYUME_EMBEDDING_MODEL", "text-embedding-3-small")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 ST_MODEL_NAME = os.environ.get("ST_MODEL_NAME", "all-MiniLM-L6-v2")
-
-# LLM (extraction / classification / merging)
-LLM_PROVIDER = os.environ.get("HERMESYUME_LLM_PROVIDER", "openai")  # openai, ollama, minimax
-OPENAI_LLM_MODEL = os.environ.get("HERMESYUME_OPENAI_LLM_MODEL", "gpt-4.1-nano")
-OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OLLAMA_LLM_MODEL = os.environ.get("OLLAMA_LLM_MODEL", "qwen2.5:3b")
-MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
 
 # ── Session intake (hippocampus replay) ──
 # Sessions idle for less than this are considered "still awake" and skipped.
@@ -87,14 +149,18 @@ MAX_EPISODES_PER_RUN = 7
 
 # ── NREM parameters ──
 CHUNK_MIN_LENGTH = 20        # minimum chars per chunk
-CLUSTER_SIMILARITY = 0.75    # cosine similarity threshold for clustering
+# Hash embeddings score related pairs much lower than neural ones (measured:
+# related 0.28-0.94, unrelated <= 0.18 vs. ~0.7+ for neural), so they get
+# their own thresholds.
+_HASH = EMBEDDING_PROVIDER == "hash"
+CLUSTER_SIMILARITY = 0.40 if _HASH else 0.75  # cosine threshold for clustering
 DEDUP_SIMILARITY = 0.88      # fact counts as "already known" above this
 MAX_CLUSTERS_PER_RUN = _env_int("HERMESYUME_MAX_CLUSTERS_PER_RUN", 40)
 MAX_NEW_FACTS = _env_int("HERMESYUME_MAX_NEW_FACTS", 12)
 ENTRY_MAX_CHARS = _env_int("HERMESYUME_ENTRY_MAX_CHARS", 220)
 
 # ── REM parameters ──
-CONTRADICTION_SIMILARITY = 0.70  # same-topic detection threshold
+CONTRADICTION_SIMILARITY = 0.25 if _HASH else 0.70  # same-topic -> ask classifier
 KEEP_PREV_STATE = _env_bool("HERMESYUME_KEEP_PREV_STATE", True)
 PREV_STATE_MAX_CHARS = 40        # "(prev: ...)" suffix length -- budget is tight
 # Importance a never-seen entry gets (the agent chose to save it itself).

@@ -4,10 +4,15 @@ Providers:
   - openai: OpenAI API (text-embedding-3-small, 1536-dim) [default]
   - ollama: Local Ollama server (nomic-embed-text, etc.)
   - sentence-transformers: Local HuggingFace models (all-MiniLM-L6-v2, etc.)
+  - hash: stdlib-only character n-gram hashing (no API key, no download)
 """
 
+import hashlib
 import json
 import logging
+import math
+import re
+import unicodedata
 import urllib.request
 
 from config import (
@@ -82,6 +87,32 @@ def _embed_sentence_transformers(texts: list[str]) -> list[list[float]]:
     return [e.tolist() for e in embeddings]
 
 
+HASH_DIM = 1024
+
+
+def _embed_hash(texts: list[str]) -> list[list[float]]:
+    """Signed feature hashing of words + character 2/3-grams.
+
+    Lexical, not semantic: it catches "Postgres 16" vs "Postgres 17" or the
+    same Korean phrase with different endings, but not paraphrases with no
+    shared words. Thresholds in config.py are tuned for it separately.
+    """
+    out = []
+    for text in texts:
+        vec = [0.0] * HASH_DIM
+        for word in re.findall(r"\w+", unicodedata.normalize("NFKC", text.lower())):
+            feats = [("w:" + word, 1.0)]
+            padded = f" {word} "
+            for n in (2, 3):
+                feats += [("c:" + padded[i:i + n], 0.5) for i in range(len(padded) - n + 1)]
+            for feat, weight in feats:
+                h = int(hashlib.md5(feat.encode("utf-8")).hexdigest(), 16)
+                vec[h % HASH_DIM] += weight if (h >> 20) & 1 else -weight
+        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+        out.append([x / norm for x in vec])
+    return out
+
+
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Generate embeddings for a list of texts.
 
@@ -90,6 +121,8 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
+    if EMBEDDING_PROVIDER == "hash":
+        return _embed_hash(texts)
     if EMBEDDING_PROVIDER == "ollama":
         return _embed_ollama(texts)
     elif EMBEDDING_PROVIDER == "sentence-transformers":
