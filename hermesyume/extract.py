@@ -1,6 +1,8 @@
 """N3 extraction: one window → typed RawClaims (PLAN-v2 §4.2 N3; CONTRACTS §4.7).
 
-- json_object, temperature cfg.llm_temperature (0), max_tokens cfg.extract_max_tokens (2000)
+- json_object, temperature cfg.llm_temperature (0), max_tokens cfg.extract_max_tokens (6000)
+- output cut off at max_tokens (finish_reason "length") → one "extract_long" call with the same
+  prompt and cfg.extract_long_max_tokens; still cut off → status "failed" (error "truncated")
 - payload error (not a dict / no "claims" list / unparseable, incl. a top-level list) → exactly one
   "extract_retry" ("JSON만 다시"); still bad → status "failed" (the window keeps its watermark)
 - per-claim coercion failures → Rejection(reason="schema"); the rest of the payload is kept
@@ -186,10 +188,14 @@ def validate_payload(data: Any, *, window_id: str | None = None
 
 # ── N3 ───────────────────────────────────────────────────────────────────────
 
-def _call(llm: Any, kind: str, messages: list[dict], cfg: Any):
+def _call(llm: Any, kind: str, messages: list[dict], cfg: Any, max_tokens: int | None = None):
     return llm.chat_json(kind, messages, model=cfg.extract_model,
-                         max_tokens=int(cfg.extract_max_tokens),
+                         max_tokens=int(max_tokens or cfg.extract_max_tokens),
                          temperature=float(cfg.llm_temperature))
+
+
+def _truncated(resp: Any) -> bool:
+    return getattr(resp, "finish_reason", "") == "length"
 
 
 def extract_window(window: Window, *, llm: Any, cfg: Any) -> ExtractResult:
@@ -202,6 +208,22 @@ def extract_window(window: Window, *, llm: Any, cfg: Any) -> ExtractResult:
         raise
     except LLMError as e:
         return ExtractResult("failed", error=f"llm_error: {e}", llm_calls=calls)
+    if _truncated(resp):
+        # A dense window produced more claims than the output budget: asking to "fix the JSON"
+        # would be cut off again, so re-ask the same prompt once with a larger budget.
+        log.info("extract output truncated for window %s; retrying with a larger budget",
+                 window.window_id[:12])
+        try:
+            calls += 1
+            resp = _call(llm, "extract_long", prompts.extract_messages(window.text), cfg,
+                         max_tokens=int(cfg.extract_long_max_tokens))
+        except (LLMAuthError, BudgetExceeded):
+            raise
+        except LLMError as e:
+            return ExtractResult("failed", error=f"truncated; long retry llm_error: {e}", llm_calls=calls)
+        if _truncated(resp):
+            return ExtractResult("failed", error="truncated", llm_calls=calls,
+                                 raw=(resp.text or "")[:RAW_KEEP])
     claims, rejects, err = validate_payload(resp.data, window_id=window.window_id)
     if err is None:
         return ExtractResult("ok", claims, rejects, llm_calls=calls)

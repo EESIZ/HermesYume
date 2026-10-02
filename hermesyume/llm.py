@@ -56,6 +56,7 @@ class LLMResponse:
     model: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    finish_reason: str = ""          # "length" = cut off at max_tokens
 
 
 @dataclass
@@ -203,13 +204,16 @@ class OpenAILLM:
             self.usage.add(kind, None, failed=True)
             raise
         try:
-            text = data["choices"][0]["message"].get("content") or ""
+            choice = data["choices"][0]
+            text = choice["message"].get("content") or ""
+            finish = str(choice.get("finish_reason") or "")
         except (KeyError, IndexError, TypeError, AttributeError):
-            text = ""
+            text, finish = "", ""
         u = data.get("usage") or {}
         resp = LLMResponse(text=text, data=parse_llm_json(text) if json_mode else None, model=m,
                            prompt_tokens=int(u.get("prompt_tokens") or 0),
-                           completion_tokens=int(u.get("completion_tokens") or 0))
+                           completion_tokens=int(u.get("completion_tokens") or 0),
+                           finish_reason=finish)
         self.usage.add(kind, resp)
         return resp
 

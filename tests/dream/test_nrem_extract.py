@@ -122,7 +122,7 @@ def test_ok_single_call_with_cfg_params(cfg):
     assert res.status == "ok" and len(res.claims) == 1 and res.llm_calls == 1
     call = llm.calls[0]
     assert call["kind"] == "extract" and call["model"] == cfg.extract_model
-    assert call["max_tokens"] == cfg.extract_max_tokens == 2000 and call["temperature"] == 0.0
+    assert call["max_tokens"] == cfg.extract_max_tokens == 6000 and call["temperature"] == 0.0
     assert call["messages"] == prompts.extract_messages(w.text)
 
 
@@ -177,3 +177,30 @@ def test_budget_charged_per_call(cfg):
     with pytest.raises(BudgetExceeded):
         extract_window(_window(), llm=llm, cfg=cfg)
     assert b.llm_calls == 1
+
+
+# ── truncated output (finish_reason "length") ────────────────────────────────
+
+def test_truncated_output_retries_same_prompt_with_long_budget(cfg):
+    from tests.fakes import Truncated
+    good = extract_json(claim("fact", "충분히 긴 사실 문장입니다.", evidence=["U#1"]))
+    import json
+    full = good if isinstance(good, str) else json.dumps(good, ensure_ascii=False)
+    cut = full[: len(full) // 2]                       # what a cut-off answer looks like
+    llm = ScriptedLLM().queue("extract", Truncated(cut)).queue("extract_long", good)
+    w = _window()
+    res = extract_window(w, llm=llm, cfg=cfg)
+    assert res.status == "ok" and len(res.claims) == 1 and res.llm_calls == 2
+    long_call = llm.calls_of("extract_long")[0]
+    assert long_call["max_tokens"] == cfg.extract_long_max_tokens == 16000
+    assert long_call["messages"] == prompts.extract_messages(w.text)    # same prompt, not "fix the JSON"
+    assert not llm.calls_of("extract_retry")
+
+
+def test_truncated_twice_fails_without_json_fix_retry(cfg):
+    from tests.fakes import Truncated
+    llm = ScriptedLLM().queue("extract", Truncated('{"claims": [{"kind": "fact"')) \
+                       .queue("extract_long", Truncated('{"claims": [{"kind": "fact", "text": "abc'))
+    res = extract_window(_window(), llm=llm, cfg=cfg)
+    assert res.status == "failed" and res.error == "truncated" and res.llm_calls == 2
+    assert not llm.calls_of("extract_retry")

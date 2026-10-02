@@ -120,6 +120,13 @@ class FakeEmbedder:
 Responder = Callable[[list[dict]], Any]   # messages -> dict | list | str | Exception
 
 
+class Truncated:
+    """Queue item for ScriptedLLM: an answer cut off at max_tokens (finish_reason "length")."""
+
+    def __init__(self, text: str):
+        self.text = text
+
+
 class ScriptedLLM:
     """``hermesyume.llm.LLM`` protocol routed by `kind`.
 
@@ -131,6 +138,7 @@ class ScriptedLLM:
     DEFAULTS: dict[str, Any] = {
         "extract": {"claims": []},
         "extract_retry": {"claims": []},
+        "extract_long": {"claims": []},
         "judge": {"relations": []},
         "judge_enum": {"type": "unknown", "newer": "same"},
         "consolidate": {"text": ""},
@@ -173,10 +181,13 @@ class ScriptedLLM:
         if isinstance(r, BaseException):
             self.usage.add(kind, None, failed=True)
             raise r
+        finish = "length" if isinstance(r, Truncated) else "stop"
+        if isinstance(r, Truncated):
+            r = r.text
         text = r if isinstance(r, str) else json.dumps(r, ensure_ascii=False)
         resp = LLMResponse(text=text, data=parse_llm_json(text) if json_mode else None,
                            model=model or "scripted", prompt_tokens=len(json.dumps(messages, ensure_ascii=False)) // 4,
-                           completion_tokens=len(text) // 4)
+                           completion_tokens=len(text) // 4, finish_reason=finish)
         self.usage.add(kind, resp)
         return resp
 

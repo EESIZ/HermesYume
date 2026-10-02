@@ -91,6 +91,7 @@ class NullLLM:
     CANNED: dict[str, Any] = {
         "extract": {"claims": []},
         "extract_retry": {"claims": []},
+        "extract_long": {"claims": []},
         "judge": {"relations": []},
         "judge_enum": {"type": "unknown", "newer": "same"},
         "consolidate": {"text": ""},
@@ -227,11 +228,11 @@ class HeuristicLLM:
         for m in messages or []:
             if m.get("role") == "user":
                 content = str(m.get("content") or "")
-                if kind in ("extract", "extract_retry"):
+                if kind in ("extract", "extract_retry", "extract_long"):
                     break          # the window text is the first user message
         if not json_mode or kind == "ping":
             data = None
-        elif kind in ("extract", "extract_retry"):
+        elif kind in ("extract", "extract_retry", "extract_long"):
             data = self._extract(content)
         elif kind == "judge":
             data = self._judge(content)

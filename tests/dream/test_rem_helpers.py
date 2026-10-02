@@ -30,7 +30,7 @@ from tests.fakes import ScriptedLLM, make_row, vector_with_cos
 
 def _stub_prompts() -> types.ModuleType:
     m = types.ModuleType("hermesyume.prompts")
-    m.PROMPT_KINDS = ("extract", "extract_retry", "judge", "judge_enum", "consolidate", "core_classify", "ping")
+    m.PROMPT_KINDS = ("extract", "extract_retry", "extract_long", "judge", "judge_enum", "consolidate", "core_classify", "ping")
     m.judge_messages = lambda new, cands: [{"role": "user", "content": json.dumps({"new": new, "candidates": cands}, ensure_ascii=False)}]
     m.judge_enum_messages = lambda new, cand: [{"role": "user", "content": json.dumps({"new": new, "existing": cand}, ensure_ascii=False)}]
     m.consolidate_messages = lambda a, b, *, max_chars: [{"role": "user", "content": f"{max_chars}\n{a}\n{b}"}]

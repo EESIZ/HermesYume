@@ -106,7 +106,8 @@ DEFAULTS: dict[str, Any] = {
     "pins_budget_chars": 800,
 
     # ── dream internals ──
-    "extract_max_tokens": 2000,
+    "extract_max_tokens": 6000,
+    "extract_long_max_tokens": 16000,   # one retry when the answer is cut off (finish_reason "length")
     "judge_max_tokens": 400,
     "consolidate_max_tokens": 600,
     "core_classify_max_tokens": 1500,

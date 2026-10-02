@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-PROMPT_KINDS: tuple[str, ...] = ("extract", "extract_retry", "judge", "judge_enum", "consolidate",
+PROMPT_KINDS: tuple[str, ...] = ("extract", "extract_retry", "extract_long", "judge", "judge_enum", "consolidate",
                                  "core_classify", "ping")
 
 # Shared kind definitions (13 kinds, §5.1). No numeric examples.
