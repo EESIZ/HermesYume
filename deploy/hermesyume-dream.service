@@ -1,0 +1,23 @@
+# HermesYume v2 — nightly dream (PLAN-v2 §8.2). systemd *user* unit.
+#
+# Install (operator, after approval):
+#   cp deploy/hermesyume-dream.{service,timer} ~/.config/systemd/user/
+#   systemctl --user edit hermesyume-dream.service     # set HERMES_HOME if it is not ~/.hermes
+#   systemctl --user daemon-reload && systemctl --user enable --now hermesyume-dream.timer
+#
+# No EnvironmentFile: the code reads the keys it needs (OPENAI_API_KEY and/or DEEPSEEK_API_KEY,
+# DEEPSEEK_BASE_URL; only when alert_telegram is on, TELEGRAM_BOT_TOKEN) by name from
+# $HERMES_HOME/.env. Nothing is sourced. install.sh --timer installs exactly these two units.
+
+[Unit]
+Description=HermesYume nightly memory consolidation (yume dream)
+
+[Service]
+Type=oneshot
+# Your Hermes home (or profile directory). Override with `systemctl --user edit`.
+Environment=HERMES_HOME=%h/.hermes
+ExecStart=%h/.local/share/hermesyume/venv/bin/yume dream
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1h
+UMask=0077

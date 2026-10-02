@@ -1,5 +1,0 @@
-# HermesYume core uses only the Python standard library.
-# Optional:
-#   pyyaml                 - exact parsing of $HERMES_HOME/config.yaml
-#   sentence-transformers  - local embeddings (HERMESYUME_EMBEDDING_PROVIDER=sentence-transformers)
-pyyaml

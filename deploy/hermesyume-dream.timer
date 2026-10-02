@@ -1,0 +1,14 @@
+# HermesYume v2 — 04:40 KST every night (after Hermes' 04:00 daily session reset + 30 min idle).
+# Persistent=true catches up a missed night; strength is recomputed (idempotent), so a late or
+# double run gives the same result.
+
+[Unit]
+Description=HermesYume nightly dream timer
+
+[Timer]
+OnCalendar=*-*-* 04:40:00 Asia/Seoul
+Persistent=true
+Unit=hermesyume-dream.service
+
+[Install]
+WantedBy=timers.target

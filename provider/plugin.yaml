@@ -1,0 +1,4 @@
+name: hermesyume
+version: 2.0.0
+description: "HermesYume 장기기억(Yume) — 밤마다 정리한 기억을 관련 있을 때만 회상 (표준 라이브러리만, 데몬 없음)"
+kind: exclusive
